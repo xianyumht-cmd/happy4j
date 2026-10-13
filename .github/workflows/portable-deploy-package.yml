@@ -36,10 +36,11 @@ jobs:
           set -euo pipefail
           JAR=build/libs/happy4j-0.0.1-SNAPSHOT.jar
           test -s "$JAR"
-          jar tf "$JAR" | grep -qx 'BOOT-INF/classes/static/index.html'
-          jar tf "$JAR" | grep -qx 'BOOT-INF/classes/static/models/douzero_fullauto/landlord.onnx'
-          jar tf "$JAR" | grep -qx 'BOOT-INF/classes/static/models/douzero_fullauto/farmer_up.onnx'
-          jar tf "$JAR" | grep -qx 'BOOT-INF/classes/db/migration/V8__openai_compatible_ai.sql'
+          jar tf "$JAR" > build/happy4j-jar-contents.txt
+          grep -Fxq 'BOOT-INF/classes/static/index.html' build/happy4j-jar-contents.txt
+          grep -Fxq 'BOOT-INF/classes/static/models/douzero_fullauto/landlord.onnx' build/happy4j-jar-contents.txt
+          grep -Fxq 'BOOT-INF/classes/static/models/douzero_fullauto/farmer_up.onnx' build/happy4j-jar-contents.txt
+          grep -Fxq 'BOOT-INF/classes/db/migration/V8__openai_compatible_ai.sql' build/happy4j-jar-contents.txt
           mkdir -p dist/stage
           cp "$JAR" dist/stage/
           cp deploy/windows/Apply-Update.ps1 deploy/windows/Update.cmd deploy/windows/README-WINDOWS.txt dist/stage/
