@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
 
 concurrency:
   group: portable-${{ github.ref }}
@@ -90,3 +90,25 @@ jobs:
           $actual = (Get-FileHash -LiteralPath $jar -Algorithm SHA256).Hash
           if ($actual -ne $shaLine) { throw 'JAR checksum mismatch' }
           Write-Host 'Windows updater syntax and SHA256 verification passed.'
+
+  preview-release:
+    needs: windows-verify
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: happy4j-windows-portable-${{ github.sha }}
+          path: packaged
+      - name: Publish versioned prerelease asset
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          FILE=$(find packaged -maxdepth 1 -name 'happy4j-windows-portable-*.zip' -type f -print -quit)
+          test -n "$FILE"
+          SHORT_SHA="${GITHUB_SHA:0:10}"
+          TAG="ai-preview-${SHORT_SHA}"
+          NOTES="AI reliability preview built from ${GITHUB_SHA}. Validated using Java 17, Node 24, bootJar, bundled frontend/ONNX checks and Windows script verification. Not merged to main. Back up portable MySQL and stop the application's Java process before updating. This is a prerelease; real-game testing remains required."
+          gh release create "$TAG" "$FILE" --repo "${GITHUB_REPOSITORY}" --target "${GITHUB_SHA}" --title "Happy4J AI preview ${SHORT_SHA}" --notes "$NOTES" --prerelease --latest=false
