@@ -75,7 +75,11 @@ tasks.register('frontendInstall', Exec) {
     workingDir frontendDir
     inputs.files(file('frontend/package.json'), file('frontend/package-lock.json'))
     outputs.dir(file('frontend/node_modules'))
-    commandLine 'npm', 'ci', '--no-audit', '--no-fund'
+    if (osName.contains('win')) {
+        commandLine 'cmd.exe', '/d', '/c', 'npm.cmd', 'ci', '--no-audit', '--no-fund'
+    } else {
+        commandLine 'npm', 'ci', '--no-audit', '--no-fund'
+    }
 }
 
 tasks.register('frontendCheck', Exec) {
@@ -85,7 +89,11 @@ tasks.register('frontendCheck', Exec) {
         exclude 'node_modules/**', 'dist/**'
     })
     outputs.file(frontendCheckMarker)
-    commandLine 'npm', 'run', 'check'
+    if (osName.contains('win')) {
+        commandLine 'cmd.exe', '/d', '/c', 'npm.cmd', 'run', 'check'
+    } else {
+        commandLine 'npm', 'run', 'check'
+    }
     doLast {
         frontendCheckMarker.get().asFile.with {
             parentFile.mkdirs()
@@ -101,7 +109,11 @@ tasks.register('frontendBuild', Exec) {
         exclude 'node_modules/**', 'dist/**'
     })
     outputs.dir(generatedFrontendResourceDir.map { it.dir('static') })
-    commandLine 'npm', 'run', 'build'
+    if (osName.contains('win')) {
+        commandLine 'cmd.exe', '/d', '/c', 'npm.cmd', 'run', 'build'
+    } else {
+        commandLine 'npm', 'run', 'build'
+    }
 }
 
 tasks.register('generateProto', Exec) {
