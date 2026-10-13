@@ -8,6 +8,7 @@ const SUPPORT_MISSION_ID = 1563
 const SUPER_DOUBLE_ITEM_ID = 1030108
 const AI_LOG_STORAGE_KEY = 'happy4j.ai.runtime.logs.v1'
 const LAST_SETTLEMENT_STORAGE_KEY = 'happy4j.ai.lastSettlement.v1'
+const COMMANDS_WITH_UNCERTAIN_DELIVERY = new Set(['PLAY', 'ORDER', 'MULTIPLE', 'SUPER_MULTIPLE', 'READY'])
 const REASON_LABELS = Object.freeze({
   RULE_FORCED_PASS: '没有合法压制动作，按规则不出',
   WP_STRATEGIC_PASS: '欢乐斗地主 WP 模型主动选择不出',
@@ -229,10 +230,13 @@ export function useGameAi(client) {
       log('SUCCESS', command, `${status} · 服务器已接收`)
       return true
     } catch (error) {
-      lastActionKey = ''
+      // A timeout does not prove that the game server rejected the command.
+      // Avoid re-sending a non-idempotent action until a new table snapshot arrives.
+      const uncertain = COMMANDS_WITH_UNCERTAIN_DELIVERY.has(command)
+      if (!uncertain) lastActionKey = ''
       runtime.lastError = error.message
-      runtime.status = '操作没有完成，正在重新同步'
-      log('ERROR', command, '操作没有完成，正在重新同步', { message: error.message })
+      runtime.status = uncertain ? '操作状态未知，等待服务器更新牌桌' : '操作没有完成，正在重新同步'
+      log('ERROR', command, runtime.status, { message: error.message, retrySuppressed: uncertain })
       schedule(1800)
       return false
     }
