@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { tableFingerprint } from './use-game-ai.js'
+import { canRefreshWallet, tableFingerprint } from './use-game-ai.js'
 
 const card = (code) => ({ code })
 
@@ -49,5 +49,17 @@ describe('AI 牌桌快照指纹', () => {
 
     expect(first.actionHistory).toHaveLength(second.actionHistory.length)
     expect(tableFingerprint(first, 5000)).not.toBe(tableFingerprint(second, 5000))
+  })
+})
+
+describe('大厅状态与余额刷新', () => {
+  it('只在大厅和有效游戏会话中允许余额查询', () => {
+    expect(canRefreshWallet({ phase: 'HALL_CONNECTED' })).toBe(true)
+    expect(canRefreshWallet({ phase: 'AT_TABLE' })).toBe(true)
+    expect(canRefreshWallet({ phase: 'PLAYING' })).toBe(true)
+    expect(canRefreshWallet({ phase: 'DISCONNECTED' })).toBe(false)
+    expect(canRefreshWallet({ phase: 'FAILED' })).toBe(false)
+    expect(canRefreshWallet({ phase: 'GAME_AUTHENTICATING' })).toBe(false)
+    expect(canRefreshWallet(null)).toBe(false)
   })
 })
