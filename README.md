@@ -131,6 +131,16 @@ protocol/generated/     Gradle 构建生成的强类型 Java
 （`OpenAiDecisionService`）：把当前候选动作和公开牌局信息发给任意 OpenAI 协议兼容的
 Chat Completions 接口，由大模型返回一个 `choice`；调用失败时自动回退到本地 DouZero 模型。
 
+### AI 稳定性修复（开发分支）
+
+OpenRouter 可继续使用 `openai/gpt-6-luna`，无须切换模型。
+`HAPPY4J_AI_MAX_OUTPUT_TOKENS` 可调整兼容接口输出上限（默认 1024）。
+对于缺失权威结算手牌的对局，统计显示“待确认”而非通过欢乐豆变化猜测胜负。
+仅在确认胜负时计入胜率；老版本基于欢乐豆的统计不会混入新统计。
+
+本次分支的修改范围、已知局限、回归测试和 Windows 10 免 Docker 升级步骤见
+[`docs/ai-reliability.md`](docs/ai-reliability.md)。本分支不自动发布或覆盖现有安装。
+
 ## 并发容量与代码质量
 
 单实例默认最多保持 **64 个不同用户的活跃 Lotus 登录**，每个站点用户默认 1 个游戏连接。
