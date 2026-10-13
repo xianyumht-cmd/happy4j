@@ -858,9 +858,12 @@ public final class HappyDdzClientService implements AutoCloseable {
                 "payload", Base64.getEncoder().encodeToString(event.payload())));
         if (event.messageId() == 0 && event.json().contains("gameTransportError"))
             session.transition(ClientPhase.FAILED, "游戏服务器连接断开");
-        else if (event.messageId() == 0)
+        else if (event.messageId() == 0) {
             session.transition(ClientPhase.DISCONNECTED, "Lotus 连接断开");
-        else if (GameMessage.READY.matches(event.messageId()))
+            // The failed socket is no longer usable. Release its session slot
+            // so a fresh QR login can establish a new hall connection.
+            runtime.disconnect(session.id());
+        } else if (GameMessage.READY.matches(event.messageId()))
             updateTablePrompt(session, "已准备，等待服务器发牌");
         else if (GameMessage.ROOM_EVENT.matches(event.messageId()))
             applyRoomEvents(session, event.payload());
