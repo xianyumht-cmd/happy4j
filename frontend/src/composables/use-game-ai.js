@@ -2,10 +2,12 @@ import { computed, onBeforeUnmount, reactive, watch } from 'vue'
 import { chooseFullAutoBid, chooseFullAutoDouble, chooseFullAutoMove } from '@/ai/douzero-fullauto.js'
 import { enumerateLegalMoves } from '@/ai/legal-moves.js'
 import { chooseDoubleDecision, chooseLandlordDecision } from '@/ai/policy.js'
+import { settlementIdentity, settlementOutcome } from '@/ai/settlement.js'
 
 const SUPPORT_MISSION_ID = 1563
 const SUPER_DOUBLE_ITEM_ID = 1030108
 const AI_LOG_STORAGE_KEY = 'happy4j.ai.runtime.logs.v1'
+const LAST_SETTLEMENT_STORAGE_KEY = 'happy4j.ai.lastSettlement.v1'
 const REASON_LABELS = Object.freeze({
   RULE_FORCED_PASS: '没有合法压制动作，按规则不出',
   WP_STRATEGIC_PASS: '欢乐斗地主 WP 模型主动选择不出',
@@ -75,7 +77,9 @@ function persistLogs(logs) {
 
 export function useGameAi(client) {
   const initialLogs = loadLogs()
-  const settlementLogs = initialLogs.filter((entry) => entry.phase === 'SETTLEMENT' && entry.level === 'INFO')
+  const settlementLogs = initialLogs.filter(
+    (entry) => entry.phase === 'SETTLEMENT' && entry.level === 'INFO' && entry.detail?.auditVersion === 1,
+  )
   const runtime = reactive({
     active: false,
     busy: false,
@@ -86,6 +90,7 @@ export function useGameAi(client) {
     rounds: settlementLogs.length,
     wins: settlementLogs.filter((entry) => entry.detail?.won === true).length,
     losses: settlementLogs.filter((entry) => entry.detail?.won === false).length,
+    unknown: settlementLogs.filter((entry) => entry.detail?.won == null).length,
     lastError: '',
     plays: initialLogs.filter((entry) => entry.phase === 'INFERENCE' && entry.level === 'PLAY').length,
     passes: initialLogs.filter((entry) => entry.phase === 'INFERENCE' && entry.level === 'PASS').length,
@@ -98,7 +103,14 @@ export function useGameAi(client) {
   let destroyed = false
   let lastActionKey = ''
   let missionRefreshKey = ''
-  let settlementKey = ''
+  let settlementKey = (() => {
+    try {
+      return localStorage.getItem(LAST_SETTLEMENT_STORAGE_KEY) || ''
+    } catch {
+      return ''
+    }
+  })()
+  let lastWalletAttemptAt = 0
   let lastObservedState = ''
   let logSequence = runtime.logs.at(-1)?.id || 0
 
@@ -118,6 +130,10 @@ export function useGameAi(client) {
   function clearLogs() {
     runtime.logs.splice(0)
     persistLogs(runtime.logs)
+    runtime.rounds = 0
+    runtime.wins = 0
+    runtime.losses = 0
+    runtime.unknown = 0
     log('INFO', 'CONTROL', '运行日志已清空')
   }
 
@@ -167,7 +183,6 @@ export function useGameAi(client) {
     runtime.status = 'AI 正在接管牌局'
     runtime.lastError = ''
     lastActionKey = ''
-    settlementKey = ''
     log('INFO', 'CONTROL', 'AI 托管已启动', {
       strategy: runtime.strategy,
       sceneId: saved.sceneId,
@@ -231,8 +246,12 @@ export function useGameAi(client) {
     const walletReady =
       Boolean(session.walletRefreshedAt) && !String(session.walletRefreshedAt).startsWith('1970-')
     if (!walletReady) {
-      log('INFO', 'WALLET', '余额尚未同步，先刷新欢乐豆')
-      await refreshWallet(fingerprint)
+      // Avoid hammering a disconnected lobby when the wallet query repeatedly fails.
+      if (Date.now() - lastWalletAttemptAt >= 15000) {
+        lastWalletAttemptAt = Date.now()
+        log('INFO', 'WALLET', '余额尚未同步，先刷新欢乐豆')
+        await refreshWallet(fingerprint)
+      } else runtime.status = '等待大厅连接恢复并同步余额'
       return true
     }
     const beans = Number(session.beans || 0)
@@ -278,11 +297,18 @@ export function useGameAi(client) {
   }
 
   async function decidePlay(table, fingerprint) {
+    if (![0, 1, 2].includes(Number(table.landlordSeatId)) ||
+        ![0, 1, 2].includes(Number(table.seatId)) || !table.hand?.length) {
+      runtime.status = '牌桌身份或手牌状态未完成同步，暂不自动出牌'
+      return
+    }
     const before = tableFingerprint(client.table.value, client.session.value?.beans)
     runtime.status = openAiEnabled() ? '大模型正在计算最优出牌' : 'DouZero FullAuto ResNet 正在计算最优出牌'
     const startedAt = performance.now()
+    let providerFailure = null
     const result = openAiEnabled()
       ? await chooseOpenAiMove(table).catch(async (error) => {
+          providerFailure = error.message
           log('ERROR', 'OPENAI', '大模型决策失败，已切换本地模型', { message: error.message })
           return chooseFullAutoMove(table, setModelState)
         })
@@ -301,6 +327,9 @@ export function useGameAi(client) {
       role: result.role,
       modelFile: result.modelFile,
       reason: result.reason,
+      decisionSource:
+        result.reason === 'OPENAI_DECISION' ? 'LUNA' : result.reason === 'ONLY_LEGAL_MOVE' ? 'RULES' : 'DOUZERO',
+      providerFailure,
       candidates: result.candidates,
       playableCandidates: result.playableCandidates,
       selectedCards: result.cards.map((card) => card.code),
@@ -339,6 +368,9 @@ export function useGameAi(client) {
     const selectedCodes = response.action === 'PASS' ? [] : response.cards || []
     const cards = selectedCodes.map((code) => table.hand.find((card) => card.code === code)).filter(Boolean)
     if (cards.length !== selectedCodes.length) throw new Error('大模型返回的手牌已发生变化')
+    const selectedKey = [...selectedCodes].sort((a, b) => a - b).join(',')
+    if (!candidates.some((candidate) => candidate.map((card) => card.code).sort((a, b) => a - b).join(',') === selectedKey))
+      throw new Error('大模型返回了候选列表之外的出牌动作')
     runtime.modelState = 'READY'
     return {
       cards,
@@ -346,7 +378,7 @@ export function useGameAi(client) {
       playableCandidates: candidates.filter((candidate) => candidate.length).length,
       q: null,
       role: table.seatId === table.landlordSeatId ? 'landlord' : 'farmer',
-      reason: 'OPENAI_DECISION',
+      reason: response.model === 'RULE_ENGINE' ? 'ONLY_LEGAL_MOVE' : 'OPENAI_DECISION',
       fallback: false,
       top: [],
       providerModel: response.model,
@@ -430,31 +462,47 @@ export function useGameAi(client) {
         return
       }
       if (table.stage === 'SETTLED') {
-        const currentSettlement = `${table.roomId}:${table.tableId}:${table.actionHistory?.length || 0}`
-        if (settlementKey !== currentSettlement) {
+        const currentSettlement = settlementIdentity(table, session.id || client.state.activeSessionId)
+        const won = settlementOutcome(table)
+        const existing = runtime.logs.find(
+          (entry) => entry.phase === 'SETTLEMENT' && entry.detail?.settlementId === currentSettlement,
+        )
+        if (existing && existing.detail.won == null && won !== null) {
+          existing.detail.won = won
+          existing.message = `第 ${runtime.rounds} 局结算已补全：${won ? '胜利' : '失利'}`
+          runtime.unknown = Math.max(0, runtime.unknown - 1)
+          if (won) runtime.wins += 1
+          else runtime.losses += 1
+          persistLogs(runtime.logs)
+        }
+        if (currentSettlement && currentSettlement !== settlementKey && !existing) {
           settlementKey = currentSettlement
+          try {
+            localStorage.setItem(LAST_SETTLEMENT_STORAGE_KEY, settlementKey)
+          } catch {
+            // The in-memory identity still prevents duplicate accounting this session.
+          }
           runtime.rounds += 1
+          if (won === true) runtime.wins += 1
+          else if (won === false) runtime.losses += 1
+          else runtime.unknown += 1
           const localResult = table.settlement?.players?.find(
             (player) => Number(player.seatId) === Number(table.seatId),
           )
-          const won = localResult ? Number(localResult.beanChange) > 0 : null
-          if (won === true) runtime.wins += 1
-          if (won === false) runtime.losses += 1
-          log(
-            'INFO',
-            'SETTLEMENT',
-            `第 ${runtime.rounds} 局${won === true ? '胜利' : won === false ? '失利' : '完成'}，先同步结算余额`,
-            {
+          log('INFO', 'SETTLEMENT',
+            `第 ${runtime.rounds} 局${won === true ? '胜利' : won === false ? '失利' : '结果待确认'}，同步结算余额`, {
+              auditVersion: 1,
+              settlementId: currentSettlement,
               won,
               beanChange: localResult?.beanChange ?? null,
               beans: localResult?.beans ?? session.beans,
               landlordSeatId: table.landlordSeatId,
               localSeatId: table.seatId,
-            },
-          )
+            })
           await refreshWallet(`${fingerprint}:settlement`)
           return
         }
+        if (!currentSettlement) runtime.status = '结算标识不完整，暂不计入统计'
         if (selectedConfig.autoChangeTable && actions.has('CHANGE_TABLE'))
           await act(`${fingerprint}:change`, 'CHANGE_TABLE', {}, '本局完成，正在自动换桌', 1400)
         else if (actions.has('READY'))
