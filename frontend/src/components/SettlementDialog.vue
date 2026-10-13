@@ -1,5 +1,6 @@
 <script setup>
 import { computed } from 'vue'
+import { settlementOutcome } from '@/ai/settlement.js'
 import defaultAvatar from '@/assets/original/default-avatar.png'
 
 const props = defineProps({ table: { type: Object, required: true }, beans: { type: Number, default: 0 } })
@@ -29,13 +30,11 @@ const localBalance = computed(() => {
 const localBefore = computed(() =>
   localBalance.value >= 0 ? localBalance.value - Number(localResult.value?.beanChange || 0) : -1,
 )
-const winner = computed(() => props.table.players?.find((player) => player.cardCount === 0))
 const localLandlord = computed(() => props.table.seatId === props.table.landlordSeatId)
-const localWon = computed(() => {
-  if (detailed.value && localResult.value) return localResult.value.beanChange > 0
-  if (!winner.value) return null
-  const landlordWon = winner.value.seatId === props.table.landlordSeatId
-  return landlordWon === localLandlord.value
+const localWon = computed(() => settlementOutcome(props.table))
+const verifiedWinnerSeat = computed(() => {
+  if (localWon.value === null) return null
+  return props.table.settlement.players.find((player) => player.remainingCards.length === 0)?.seatId ?? null
 })
 const number = (value) => new Intl.NumberFormat('zh-CN').format(Number(value || 0))
 const signed = (value) => `${Number(value) > 0 ? '+' : ''}${number(value)}`
@@ -83,7 +82,7 @@ function avatarFallback(event) {
         <div
           v-for="result in results"
           :key="result.seatId"
-          :class="{ winner: result.beanChange > 0 || result.player?.cardCount === 0 }"
+          :class="{ winner: verifiedWinnerSeat !== null && result.seatId === verifiedWinnerSeat }"
         >
           <div class="settlement-player-head">
             <img :src="result.player?.avatarUrl || defaultAvatar" alt="玩家头像" @error="avatarFallback" />

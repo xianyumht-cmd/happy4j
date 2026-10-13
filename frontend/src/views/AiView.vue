@@ -62,12 +62,15 @@ function time(value) {
     <div class="ai-page-dashboard">
       <section class="ai-page-metrics">
         <article>
-          <span>本次胜率</span><b>{{ winRate }}</b
-          ><small>{{ runtime?.wins || 0 }} 胜 / {{ runtime?.losses || 0 }} 负</small>
+          <span>有效对局胜率</span><b>{{ winRate }}</b
+          ><small
+            >{{ runtime?.wins || 0 }} 胜 / {{ runtime?.losses || 0 }} 负 ·
+            {{ runtime?.unknown || 0 }} 待确认</small
+          >
         </article>
         <article>
           <span>完成对局</span><b>{{ runtime?.rounds || 0 }}</b
-          ><small>自动结算并继续循环</small>
+          ><small>仅统计可识别结算事件</small>
         </article>
         <article>
           <span>主动出牌</span><b>{{ runtime?.plays || 0 }}</b
