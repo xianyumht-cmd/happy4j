@@ -3,11 +3,9 @@ name: AI regression checks
 on:
   pull_request:
     branches: [main]
-  push:
-    branches: [fix/ai-decision-reliability]
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number }}
   cancel-in-progress: true
 
 permissions:
