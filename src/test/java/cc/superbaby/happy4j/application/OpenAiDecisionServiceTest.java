@@ -71,7 +71,9 @@ class OpenAiDecisionServiceTest {
         assertThat(result.confidence()).isEqualTo(0.86);
         assertThat(result.totalTokens()).isEqualTo(321);
         assertThat(authorization.get()).isEqualTo("Bearer secret-key");
-        assertThat(requestBody.get()).contains("expert-ddz", "options", "messages").doesNotContain("secret-key");
+        assertThat(requestBody.get()).contains("expert-ddz", "options", "messages",
+                "\"myRole\":\"FARMER\"", "\"lastPlaySide\":\"LANDLORD\"", "\"landlordCardsLeft\":8")
+                .doesNotContain("secret-key");
     }
 
     @Test
@@ -154,6 +156,35 @@ class OpenAiDecisionServiceTest {
         assertThat(result.finishReason()).isEqualTo("stop");
         assertThat(requestBody.get()).contains("openai/gpt-6-luna", "\"max_tokens\":1024")
                 .doesNotContain("test-key");
+    }
+
+
+    @Test
+    void reportsProviderFinishReasonWhenDecisionIsNotJson() throws Exception {
+        server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/v1/chat/completions", exchange -> {
+            byte[] response = """
+                    {"model":"openai/gpt-6-luna","choices":[{"finish_reason":"stop","message":{"role":"assistant","content":"我建议先过牌"}}],"usage":{"total_tokens":120}}
+                    """.getBytes(StandardCharsets.UTF_8);
+            exchange.getResponseHeaders().set("Content-Type", "application/json");
+            exchange.sendResponseHeaders(200, response.length);
+            exchange.getResponseBody().write(response);
+            exchange.close();
+        });
+        server.start();
+        UUID userId = UUID.randomUUID();
+        AiConfigurationService configurations = mock(AiConfigurationService.class);
+        when(configurations.provider(userId)).thenReturn(new AiConfigurationService.ProviderConfiguration(
+                URI.create("http://127.0.0.1:" + server.getAddress().getPort() + "/v1/chat/completions"),
+                "openai/gpt-6-luna", "test-key"));
+        var service = new OpenAiDecisionService(configurations,
+                HttpClient.newBuilder().build(), new JsonMapper());
+        ClientSession session = new ClientSession(UUID.randomUUID(), userId);
+        session.table(table());
+        var payload = new JsonMapper().readTree("{\"phase\":\"PLAY\",\"candidates\":[[4],[]]}");
+
+        assertThatThrownBy(() -> service.decide(userId, session, payload).get(5, TimeUnit.SECONDS))
+                .hasRootCauseMessage("大模型没有返回JSON决策 (finish_reason=stop)");
     }
 
     private static TableSnapshot table() {
