@@ -257,6 +257,39 @@ class DdzTableStateMachineTest {
         assertThat(table.actionHistory()).allMatch(entry -> entry.action().equals("不出"));
     }
 
+    @Test
+    void repeatedEndMessagesProduceOneSettlementMarkerAndNextRoundClearsHistory() {
+        TableSnapshot table = new TableSnapshot(1260, 0, 88, 0, 0, 1,
+                range(1, 17).stream().map(cc.superbaby.happy4j.domain.Card::fromCode).toList(),
+                List.of(), List.of(), List.of(), GameStage.PLAYING,
+                List.of(TableAction.PLAY, TableAction.PASS), 1, "牌局中");
+
+        table = machine.applyGameSo(table, event(4, -1, 1, 2, 0, -1,
+                List.of(19), List.of(), 0));
+        table = machine.applyGameSo(table, event(102, -1, -1, -1, 0, -1,
+                List.of(), List.of(), 0));
+        var firstEnd = table.actionHistory().get(table.actionHistory().size() - 1);
+        table = machine.applyGameSo(table, event(102, -1, -1, -1, 0, -1,
+                List.of(), List.of(), 0));
+        var settlement = new cc.superbaby.happy4j.protocol.game.MiniGameGameSoCodec.Settlement(
+                1, List.of(-100L, 200L, -100L), List.of(), List.of(),
+                List.of(List.of(4), List.of(), List.of(8)));
+        table = machine.applyGameSo(table, new GameSoEvent(0, -1, 5, 0, -1, -1, 0,
+                0, 0, -1, 0, List.of(), List.of(), List.of(), settlement));
+
+        assertThat(table.actionHistory()).filteredOn(entry -> entry.action().equals("本局结束"))
+                .containsExactly(firstEnd);
+        assertThat(table.settlement().players()).hasSize(3);
+
+        table = machine.applyGameSo(table, event(101, -1, -1, -1, 0, -1,
+                List.of(), List.of(), 0));
+        assertThat(table.actionHistory()).isEmpty();
+        table = machine.applyGameSo(table, event(1, 0, -1, -1, 0, -1,
+                range(1, 17), List.of(), 0));
+        assertThat(table.actionHistory()).isEmpty();
+        assertThat(table.settlement().available()).isFalse();
+    }
+
     private static GameSoEvent event(int subtype, int seat, int actor, int next, int decision,
                                      int landlord, List<Integer> cards, List<Integer> bottom, int multiplier) {
         return new GameSoEvent(0, seat, subtype, 0, actor, next, decision,
