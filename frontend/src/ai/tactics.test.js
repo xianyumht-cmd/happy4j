@@ -55,11 +55,7 @@ describe('urgent landlord defence', () => {
     expect(urgentLandlordResponse({ ...danger, players: [] }, moves, [])).toBeNull()
     expect(urgentLandlordResponse({ ...danger, landlordSeatId: 0 }, moves, [])).toBeNull()
     expect(
-      urgentLandlordResponse(
-        { ...danger, players: [{ seatId: 2, cardCount: 6 }] },
-        moves,
-        [],
-      ),
+      urgentLandlordResponse({ ...danger, players: [{ seatId: 2, cardCount: 6 }] }, moves, []),
     ).toBeNull()
   })
 
