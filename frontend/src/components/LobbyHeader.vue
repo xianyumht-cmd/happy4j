@@ -1,7 +1,11 @@
 <script setup>
+import { computed } from 'vue'
 import defaultAvatar from '@/assets/original/default-avatar.png'
+import { hallReady, sessionStatus } from '@/utils/game-session-state.js'
 
-defineProps({ session: Object, connected: Boolean, tab: String })
+const props = defineProps({ session: Object, connected: Boolean, tab: String })
+const hallConnected = computed(() => props.connected && hallReady(props.session))
+const status = computed(() => sessionStatus(props.session, props.connected))
 const emit = defineEmits(['tab', 'qr', 'logout'])
 const number = (value) => new Intl.NumberFormat('zh-CN').format(Number(value || 0))
 function avatarFallback(event) {
@@ -14,11 +18,11 @@ function avatarFallback(event) {
     <div class="lobby-profile">
       <div class="avatar-ring">
         <img :src="session?.avatarUrl || defaultAvatar" alt="玩家头像" @error="avatarFallback" />
-        <span :class="{ online: connected }"></span>
+        <span :class="{ online: hallConnected }" :title="status"></span>
       </div>
       <div class="profile-copy">
         <strong>{{ session?.nickname || '欢乐玩家' }}</strong>
-        <small>{{ session?.uin ? `ID ${session.uin}` : '扫码后同步游戏资料' }}</small>
+        <small>{{ hallConnected ? `ID ${session.uin} · 大厅已连接` : status }}</small>
       </div>
     </div>
 
