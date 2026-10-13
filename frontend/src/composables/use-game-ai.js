@@ -26,6 +26,12 @@ const REASON_LABELS = Object.freeze({
   FULLAUTO_WIN_NOW: 'FullAuto 检测到可以立即出完',
 })
 
+const WALLET_READY_PHASES = new Set(['HALL_CONNECTED', 'ENTERING_ROOM', 'AT_TABLE', 'READY', 'PLAYING'])
+
+export function canRefreshWallet(session) {
+  return WALLET_READY_PHASES.has(session?.phase)
+}
+
 function delay(milliseconds) {
   return new Promise((resolve) => setTimeout(resolve, milliseconds))
 }
@@ -251,6 +257,10 @@ export function useGameAi(client) {
     const walletReady =
       Boolean(session.walletRefreshedAt) && !String(session.walletRefreshedAt).startsWith('1970-')
     if (!walletReady) {
+      if (!canRefreshWallet(session)) {
+        runtime.status = '大厅尚未连接，暂停余额刷新'
+        return true
+      }
       // Avoid hammering a disconnected lobby when the wallet query repeatedly fails.
       if (Date.now() - lastWalletAttemptAt >= 15000) {
         lastWalletAttemptAt = Date.now()
