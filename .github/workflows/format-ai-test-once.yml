@@ -1,0 +1,38 @@
+name: Temporary one-shot Prettier fix
+
+on:
+  push:
+    paths:
+      - .github/workflows/format-ai-test-once.yml
+
+permissions:
+  contents: write
+
+jobs:
+  format:
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/fix/ai-decision-reliability'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/ai-decision-reliability
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Format AI test
+        working-directory: frontend
+        run: |
+          npm ci
+          npx prettier --write src/ai/tactics.test.js
+      - name: Commit formatting if changed
+        run: |
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git config user.name "github-actions[bot]"
+          if ! git diff --exit-code -- frontend/src/ai/tactics.test.js; then
+            git add frontend/src/ai/tactics.test.js
+            git commit -m "style(ai): apply Prettier to urgent response tests"
+            git push origin HEAD:fix/ai-decision-reliability
+          fi
