@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest'
-import { immediateWinningMove, urgentLandlordResponse } from './tactics.js'
+import {
+  immediateWinningMove,
+  preserveLandlordSingleControl,
+  urgentLandlordResponse,
+} from './tactics.js'
 
 const card = (code) => ({ code })
 const table = {
@@ -64,5 +68,51 @@ describe('urgent landlord defence', () => {
     expect(urgentLandlordResponse(danger, [[], response], response)).toBeNull()
     expect(urgentLandlordResponse(danger, [[]], [])).toBeNull()
     expect(urgentLandlordResponse(danger, [], [])).toBeNull()
+  })
+})
+
+describe('landlord isolated-single endgame', () => {
+  const lonely = {
+    stage: 'PLAYING',
+    seatId: 2,
+    turnSeatId: 2,
+    landlordSeatId: 2,
+    lastPlay: [],
+    availableActions: ['PLAY', 'TRUST'],
+    hand: [card(3), card(5), card(10), card(13)],
+    players: [
+      { seatId: 0, cardCount: 7 },
+      { seatId: 1, cardCount: 9 },
+      { seatId: 2, cardCount: 4 },
+    ],
+  }
+  const moves = lonely.hand.map((item) => [item])
+
+  it('does not waste the highest single when free-leading four isolated singles', () => {
+    expect(preserveLandlordSingleControl(lonely, moves, [card(13)])).toEqual([card(3)])
+  })
+
+  it('does not override a lower single, a response, or an imminent opponent finish', () => {
+    expect(preserveLandlordSingleControl(lonely, moves, [card(5)])).toBeNull()
+    expect(
+      preserveLandlordSingleControl(
+        { ...lonely, lastPlay: [card(9)], lastPlaySeatId: 0 },
+        moves,
+        [card(13)],
+      ),
+    ).toBeNull()
+    expect(
+      preserveLandlordSingleControl(
+        { ...lonely, players: [{ seatId: 0, cardCount: 1 }, ...lonely.players.slice(1)] },
+        moves,
+        [card(13)],
+      ),
+    ).toBeNull()
+  })
+
+  it('leaves full-hand finishes, compound moves and other roles to the core strategy', () => {
+    expect(preserveLandlordSingleControl(lonely, [[card(3), card(5)]], [card(13)])).toBeNull()
+    expect(preserveLandlordSingleControl({ ...lonely, seatId: 1 }, moves, [card(13)])).toBeNull()
+    expect(preserveLandlordSingleControl({ ...lonely, turnSeatId: 0 }, moves, [card(13)])).toBeNull()
   })
 })
