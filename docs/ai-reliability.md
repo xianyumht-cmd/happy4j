@@ -41,6 +41,29 @@ installation.
    initial wallet refresh retries and prevents blind resend of non-idempotent
    game commands following ambiguous transport failures.
 
+## 2026-10-13 post-upgrade runtime findings
+
+The user-provided live log confirmed a real `openai/gpt-6-luna` decision and
+the zero-token rule engine for forced passes. It also exposed two remaining
+risks: speculative farmer passes when legal responses existed, and a slow
+non-JSON LLM response while the server-side turn continued progressing.
+
+Mitigations on this branch:
+- A farmer pass is overridden only when the latest active play belongs to the
+  landlord, the landlord visibly holds 1–5 cards, and a genuine legal response
+  was enumerated. Prefer non-bomb responses and avoid unnecessary splitting.
+  This is a safety rule, not a guaranteed win or a complete endgame solver.
+- Live PLAY requests to the provider use an eight-second HTTP timeout and only
+  one attempt. Subsequent fallback remains the bundled local DouZero model.
+- A fingerprint change after inference suppresses an outdated action and now
+  emits a diagnostic entry; it does not resubmit an old PLAY command.
+- Model failure messages include `finish_reason` for malformed decision text.
+  The provider's raw body and API key are not written to frontend logs.
+
+The earlier historical log slice (03:06–03:10 UTC) predates the portable update.
+The post-update slice begins at approximately 04:20 UTC. They must not be
+aggregated as a new-version win/loss benchmark.
+
 ## Statistics limitations
 
 The browser keeps only the most recent 300 log entries. Its displayed counts are
@@ -79,9 +102,11 @@ sanitized captured fixtures before they can be declared resolved:
 - Duplicate command suppression after a transport timeout where the server
   accepted a request but its acknowledgement was lost.
 
-## Windows portable installation (after PR review only)
+## Windows portable installation
 
-This branch is **not** installed or released automatically.
+The branch is still an unmerged draft PR. CI publishes distinct, manually
+installable prerelease assets after successful Linux build and Windows syntax
+verification. Existing installations are never changed by CI.
 
 1. Back up `D:\Happy4J`, especially portable MySQL data and local configuration.
 2. Check out the approved commit into a **separate** folder, not the existing
