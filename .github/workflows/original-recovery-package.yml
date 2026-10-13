@@ -1,0 +1,132 @@
+name: Original upstream recovery package
+
+on:
+  push:
+    branches: [restore/original-37be0f1]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: original-recovery-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  ORIGINAL_REPOSITORY: MakeSomeFakeNews/happy4j
+  ORIGINAL_COMMIT: 37be0f1a39da66eedad8026dfa1dad8ca8caa424
+  SHORT_REV: 37be0f1a39
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - name: Checkout upstream original (never the patched fork branch)
+        uses: actions/checkout@v4
+        with:
+          repository: MakeSomeFakeNews/happy4j
+          ref: 37be0f1a39da66eedad8026dfa1dad8ca8caa424
+          fetch-depth: 1
+      - name: Verify upstream source identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$ORIGINAL_COMMIT"
+          test "$(git remote get-url origin)" = "https://github.com/MakeSomeFakeNews/happy4j"
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Verify tests and build original JAR
+        shell: bash
+        run: ./gradlew clean test bootJar --no-daemon
+      - name: Package unchanged original source and built original JAR
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          JAR=build/libs/happy4j-0.0.1-SNAPSHOT.jar
+          test -s "$JAR"
+          jar tf "$JAR" > dist/jar-members.txt
+          grep -Fxq 'BOOT-INF/classes/static/index.html' dist/jar-members.txt
+          grep -Fxq 'BOOT-INF/classes/static/models/douzero_fullauto/landlord.onnx' dist/jar-members.txt
+          grep -Fxq 'BOOT-INF/classes/static/models/douzero_fullauto/landlord_up.onnx' dist/jar-members.txt
+          grep -Fxq 'BOOT-INF/classes/static/models/douzero_fullauto/landlord_down.onnx' dist/jar-members.txt
+          cp "$JAR" "dist/happy4j-original-$SHORT_REV.jar"
+          git archive --format=zip --prefix=upstream-source/ -o "dist/happy4j-original-source-$SHORT_REV.zip" HEAD
+          (cd dist && sha256sum "happy4j-original-$SHORT_REV.jar" "happy4j-original-source-$SHORT_REV.zip" > SHA256SUMS.txt)
+          printf 'original_repository=%s\noriginal_commit=%s\nbuild_java=17\nbuild_node=24\n' "$ORIGINAL_REPOSITORY" "$ORIGINAL_COMMIT" > dist/BUILD-INFO.txt
+          cat dist/SHA256SUMS.txt
+          ls -lh dist/happy4j-original-*
+      - uses: actions/upload-artifact@v4
+        with:
+          name: original-recovery-assets-${{ github.sha }}
+          path: |
+            dist/happy4j-original-*.jar
+            dist/happy4j-original-source-*.zip
+            dist/SHA256SUMS.txt
+            dist/BUILD-INFO.txt
+          if-no-files-found: error
+          retention-days: 3
+
+  windows-verify:
+    needs: build
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: original-recovery-assets-${{ github.sha }}
+          path: downloaded
+      - name: Validate original source archive and JAR on Windows
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $short = '37be0f1a39'
+          $jar = "downloaded/happy4j-original-$short.jar"
+          $zip = "downloaded/happy4j-original-source-$short.zip"
+          $lines = @(Get-Content 'downloaded/SHA256SUMS.txt')
+          if ($lines.Count -ne 2) { throw 'Invalid checksum manifest' }
+          foreach ($line in $lines) {
+            if ($line -notmatch '^([0-9a-f]{64})\\s+(.+)$') { throw 'Malformed checksum line' }
+            $expected = $Matches[1]
+            $filename = $Matches[2]
+            $actual = (Get-FileHash -Algorithm SHA256 -LiteralPath (Join-Path 'downloaded' $filename)).Hash
+            if ($expected -ine $actual) { throw "Checksum mismatch: $filename" }
+          }
+          Expand-Archive -LiteralPath $zip -DestinationPath extracted
+          foreach ($entry in @('gradlew.bat','frontend/package.json','src/main/java','settings.gradle')) {
+            if (-not (Test-Path (Join-Path 'extracted/upstream-source' $entry))) {
+              throw "Original source is missing: $entry"
+            }
+          }
+          if (-not (Test-Path -LiteralPath $jar)) { throw 'Original jar missing' }
+          Write-Host 'Upstream original build, archive extraction, and SHA256 verification passed.'
+
+  publish:
+    needs: windows-verify
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: original-recovery-assets-${{ github.sha }}
+          path: recovery
+      - name: Publish verified upstream recovery assets
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          TAG="upstream-restore-$SHORT_REV"
+          test -s "recovery/happy4j-original-$SHORT_REV.jar"
+          test -s "recovery/happy4j-original-source-$SHORT_REV.zip"
+          (cd recovery && sha256sum -c SHA256SUMS.txt)
+          gh release create "$TAG" recovery/happy4j-original-$SHORT_REV.jar recovery/happy4j-original-source-$SHORT_REV.zip recovery/SHA256SUMS.txt recovery/BUILD-INFO.txt             --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA"             --title "Happy4J original upstream recovery ($SHORT_REV)"             --notes "Unmodified MakeSomeFakeNews/happy4j source at $ORIGINAL_COMMIT, built with Java 17 / Node 24. This restores the original DouZero and original optional OpenAI-compatible strategy; no changes from fix/ai-decision-reliability. Source and compiled JAR supplied together. Use with a protective local backup. Not an upstream-author release."             --prerelease --latest=false
