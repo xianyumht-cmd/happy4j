@@ -129,7 +129,7 @@ class OpenAiDecisionServiceTest {
         server.createContext("/v1/chat/completions", exchange -> {
             requestBody.set(new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8));
             byte[] response = """
-                    {"model":"openai/gpt-6-luna","choices":[{"finish_reason":"stop","message":{"role":"assistant","content":"{\"choice\":0,\"reason\":\"拦截地主\",\"confidence\":0.9}"}}],"usage":{"total_tokens":84}}
+                    {"model":"openai/gpt-6-luna","choices":[{"finish_reason":"stop","message":{"role":"assistant","content":"{\\"choice\\":0,\\"reason\\":\\"拦截地主\\",\\"confidence\\":0.9}"}}],"usage":{"total_tokens":84}}
                     """.getBytes(StandardCharsets.UTF_8);
             exchange.getResponseHeaders().set("Content-Type", "application/json");
             exchange.sendResponseHeaders(200, response.length);
@@ -152,7 +152,7 @@ class OpenAiDecisionServiceTest {
 
         assertThat(result.model()).isEqualTo("openai/gpt-6-luna");
         assertThat(result.finishReason()).isEqualTo("stop");
-        assertThat(requestBody.get()).contains("openai/gpt-6-luna", "\\"max_tokens\\":1024")
+        assertThat(requestBody.get()).contains("openai/gpt-6-luna", "\"max_tokens\":1024")
                 .doesNotContain("test-key");
     }
 
