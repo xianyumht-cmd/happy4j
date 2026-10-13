@@ -45,13 +45,27 @@ public class ClientRuntimeRegistry implements AutoCloseable {
     public synchronized void bind(UUID sessionId, GameTransportPort connection,
                                   int maxActiveUsers, int maxSessionsPerUser) {
         ClientSession session = get(sessionId);
+        pruneDisconnected();
         boolean replacing = connections.containsKey(sessionId);
         if (!replacing) assertCapacity(session.ownerId(), maxActiveUsers, maxSessionsPerUser);
         GameTransportPort previous = connections.put(sessionId, connection);
         if (previous != null && previous != connection) previous.close();
     }
 
+    /**
+     * Relogin within the same session replaces that session's transport. It does not
+     * consume a second per-user connection slot.
+     */
+    public synchronized void assertCapacityForSession(UUID sessionId,
+                                                      int maxActiveUsers, int maxSessionsPerUser) {
+        ClientSession session = get(sessionId);
+        pruneDisconnected();
+        if (!connections.containsKey(sessionId))
+            assertCapacity(session.ownerId(), maxActiveUsers, maxSessionsPerUser);
+    }
+
     public synchronized void assertCapacity(UUID ownerId, int maxActiveUsers, int maxSessionsPerUser) {
+        pruneDisconnected();
         long owned = connections.keySet().stream()
                 .map(sessions::get)
                 .filter(java.util.Objects::nonNull)
@@ -65,18 +79,41 @@ public class ClientRuntimeRegistry implements AutoCloseable {
         }
     }
 
+    /**
+     * Release only the transport that actually failed. A late failure callback from
+     * an older transport must not evict its freshly connected replacement.
+     */
+    public boolean releaseIfCurrent(UUID sessionId, GameTransportPort connection) {
+        return connections.remove(sessionId, connection);
+    }
+
+    public boolean isCurrent(UUID sessionId, GameTransportPort connection) {
+        return connections.get(sessionId) == connection;
+    }
+
+    private void pruneDisconnected() {
+        connections.forEach((id, connection) -> {
+            if (!connection.connected()) connections.remove(id, connection);
+        });
+    }
+
     public int activeConnectionCount() {
+        pruneDisconnected();
         return connections.size();
     }
 
     public long activeUserCount() {
+        pruneDisconnected();
         return connections.keySet().stream().map(sessions::get).filter(java.util.Objects::nonNull)
                 .map(ClientSession::ownerId).distinct().count();
     }
 
     public GameTransportPort connection(UUID sessionId) {
         GameTransportPort value = connections.get(sessionId);
-        if (value == null) throw new IllegalStateException("大厅尚未连接");
+        if (value == null || !value.connected()) {
+            if (value != null) connections.remove(sessionId, value);
+            throw new IllegalStateException("大厅尚未连接");
+        }
         return value;
     }
 
