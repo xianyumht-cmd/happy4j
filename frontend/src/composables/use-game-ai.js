@@ -3,6 +3,7 @@ import { chooseFullAutoBid, chooseFullAutoDouble, chooseFullAutoMove } from '@/a
 import { enumerateLegalMoves } from '@/ai/legal-moves.js'
 import { chooseDoubleDecision, chooseLandlordDecision } from '@/ai/policy.js'
 import { settlementIdentity, settlementOutcome } from '@/ai/settlement.js'
+import { immediateWinningMove } from '@/ai/tactics.js'
 
 const SUPPORT_MISSION_ID = 1563
 const SUPER_DOUBLE_ITEM_ID = 1030108
@@ -332,7 +333,11 @@ export function useGameAi(client) {
       modelFile: result.modelFile,
       reason: result.reason,
       decisionSource:
-        result.reason === 'OPENAI_DECISION' ? 'LUNA' : result.reason === 'ONLY_LEGAL_MOVE' ? 'RULES' : 'DOUZERO',
+        result.reason === 'OPENAI_DECISION'
+          ? 'LUNA'
+          : result.reason === 'ONLY_LEGAL_MOVE' || result.reason === 'TACTICAL_WIN_NOW'
+            ? 'RULES'
+            : 'DOUZERO',
       providerFailure,
       candidates: result.candidates,
       playableCandidates: result.playableCandidates,
@@ -366,6 +371,22 @@ export function useGameAi(client) {
   async function chooseOpenAiMove(table) {
     const candidates = enumerateLegalMoves(table)
     if (!candidates.length) throw new Error('当前没有可提交的合法动作')
+    const winningMove = immediateWinningMove(table, candidates)
+    if (winningMove) {
+      runtime.modelState = 'READY'
+      return {
+        cards: winningMove,
+        candidates: candidates.length,
+        playableCandidates: candidates.filter((candidate) => candidate.length).length,
+        q: null,
+        role: table.seatId === table.landlordSeatId ? 'landlord' : 'farmer',
+        reason: 'TACTICAL_WIN_NOW',
+        fallback: false,
+        top: [],
+        providerModel: 'RULE_ENGINE',
+        providerReason: '合法动作可立即出完全部手牌',
+      }
+    }
     const response = await client.command('AI_DECIDE', {
       phase: 'PLAY',
       candidates: candidates.map((cards) => cards.map((card) => card.code)),
