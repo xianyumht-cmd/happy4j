@@ -208,10 +208,10 @@ public final class HappyDdzClientService implements AutoCloseable {
         int maxActiveUsers = serverConfig.integer(ServerConfigKeys.RUNTIME_MAX_ACTIVE_USERS, 64);
         int maxSessionsPerUser = serverConfig.integer(
                 ServerConfigKeys.RUNTIME_MAX_ACTIVE_SESSIONS_PER_USER, 1);
-        runtime.assertCapacity(session.ownerId(), maxActiveUsers, maxSessionsPerUser);
+        runtime.assertCapacityForSession(session.id(), maxActiveUsers, maxSessionsPerUser);
         GameTransportPort connection = transports.create();
         try {
-            connection.connect(credential, event -> onRemoteEvent(session, event));
+            connection.connect(credential, event -> onRemoteEvent(session, connection, event));
             hall.loginMissionSystem(connection, credential);
             runtime.bind(session.id(), connection, maxActiveUsers, maxSessionsPerUser);
         } catch (RuntimeException failure) {
@@ -852,15 +852,22 @@ public final class HappyDdzClientService implements AutoCloseable {
         }
     }
 
-    private void onRemoteEvent(ClientSession session, ProtocolResponse event) {
+    private void onRemoteEvent(ClientSession session, GameTransportPort source, ProtocolResponse event) {
+        if (event.messageId() == 0) {
+            if (event.json().contains("gameTransportError")) {
+                if (runtime.isCurrent(session.id(), source))
+                    session.transition(ClientPhase.FAILED, "游戏服务器连接断开");
+            } else if (runtime.releaseIfCurrent(session.id(), source)) {
+                session.transition(ClientPhase.DISCONNECTED, "Lotus 连接断开");
+            }
+            return;
+        }
+        // Ignore events from an old transport after a successful same-session relogin.
+        if (!runtime.isCurrent(session.id(), source) && runtime.connected(session.id())) return;
         session.publish("REMOTE", "收到服务器消息 " + event.messageId(), Map.of(
                 "messageId", event.messageId(), "messageType", event.messageType(), "json", event.json(),
                 "payload", Base64.getEncoder().encodeToString(event.payload())));
-        if (event.messageId() == 0 && event.json().contains("gameTransportError"))
-            session.transition(ClientPhase.FAILED, "游戏服务器连接断开");
-        else if (event.messageId() == 0)
-            session.transition(ClientPhase.DISCONNECTED, "Lotus 连接断开");
-        else if (GameMessage.READY.matches(event.messageId()))
+        if (GameMessage.READY.matches(event.messageId()))
             updateTablePrompt(session, "已准备，等待服务器发牌");
         else if (GameMessage.ROOM_EVENT.matches(event.messageId()))
             applyRoomEvents(session, event.payload());
