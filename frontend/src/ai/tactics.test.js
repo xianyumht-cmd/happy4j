@@ -1,9 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import {
-  immediateWinningMove,
-  preserveLandlordSingleControl,
-  urgentLandlordResponse,
-} from './tactics.js'
+import { immediateWinningMove, preserveLandlordSingleControl, urgentLandlordResponse } from './tactics.js'
 
 const card = (code) => ({ code })
 const table = {
@@ -95,11 +91,7 @@ describe('landlord isolated-single endgame', () => {
   it('does not override a lower single, a response, or an imminent opponent finish', () => {
     expect(preserveLandlordSingleControl(lonely, moves, [card(5)])).toBeNull()
     expect(
-      preserveLandlordSingleControl(
-        { ...lonely, lastPlay: [card(9)], lastPlaySeatId: 0 },
-        moves,
-        [card(13)],
-      ),
+      preserveLandlordSingleControl({ ...lonely, lastPlay: [card(9)], lastPlaySeatId: 0 }, moves, [card(13)]),
     ).toBeNull()
     expect(
       preserveLandlordSingleControl(

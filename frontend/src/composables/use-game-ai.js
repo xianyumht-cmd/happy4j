@@ -3,11 +3,7 @@ import { chooseFullAutoBid, chooseFullAutoDouble, chooseFullAutoMove } from '@/a
 import { enumerateLegalMoves } from '@/ai/legal-moves.js'
 import { chooseDoubleDecision, chooseLandlordDecision } from '@/ai/policy.js'
 import { settlementIdentity, settlementOutcome } from '@/ai/settlement.js'
-import {
-  immediateWinningMove,
-  preserveLandlordSingleControl,
-  urgentLandlordResponse,
-} from '@/ai/tactics.js'
+import { immediateWinningMove, preserveLandlordSingleControl, urgentLandlordResponse } from '@/ai/tactics.js'
 
 const SUPPORT_MISSION_ID = 1563
 const SUPER_DOUBLE_ITEM_ID = 1030108
@@ -395,9 +391,7 @@ export function useGameAi(client) {
       modelFile: result.modelFile,
       reason: result.reason,
       decisionSource:
-        result.tacticalOverride ||
-        result.reason === 'ONLY_LEGAL_MOVE' ||
-        result.reason === 'TACTICAL_WIN_NOW'
+        result.tacticalOverride || result.reason === 'ONLY_LEGAL_MOVE' || result.reason === 'TACTICAL_WIN_NOW'
           ? 'RULES'
           : result.reason === 'OPENAI_DECISION'
             ? 'LUNA'

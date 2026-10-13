@@ -67,9 +67,7 @@ describe('大厅状态与余额刷新', () => {
 describe('server insufficient-bean guard', () => {
   it('recognizes the game server code and localized message', () => {
     expect(isInsufficientBeansError(new Error('换桌失败，游戏服务器返回 10810：请补充'))).toBe(true)
-    expect(isInsufficientBeansError(new Error('您的欢乐豆太少啦，请先去补充点欢乐豆吧~'))).toBe(
-      true,
-    )
+    expect(isInsufficientBeansError(new Error('您的欢乐豆太少啦，请先去补充点欢乐豆吧~'))).toBe(true)
   })
 
   it('does not stop autonomous play for unrelated transient failures', () => {

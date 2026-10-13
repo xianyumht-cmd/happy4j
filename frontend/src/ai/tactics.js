@@ -80,7 +80,10 @@ export function preserveLandlordSingleControl(table, candidates, selectedCards) 
   if (!selectedCards || selectedCards.length !== 1) return null
 
   const others = (table.players || []).filter((player) => Number(player.seatId) !== Number(table.seatId))
-  if (others.length !== 2 || others.some((player) => !Number.isInteger(player.cardCount) || player.cardCount <= 2))
+  if (
+    others.length !== 2 ||
+    others.some((player) => !Number.isInteger(player.cardCount) || player.cardCount <= 2)
+  )
     return null
   const moves = candidates || []
   if (moves.length !== table.hand.length || moves.some((cards) => cards.length !== 1)) return null
