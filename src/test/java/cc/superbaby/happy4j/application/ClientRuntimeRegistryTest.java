@@ -65,6 +65,57 @@ class ClientRuntimeRegistryTest {
         registry.close();
     }
 
+    @Test
+    void reclaimsDeadLotusConnectionBeforeEnforcingOneSessionLimit() {
+        ClientRuntimeRegistry registry = new ClientRuntimeRegistry();
+        UUID owner = UUID.randomUUID();
+        ClientSession first = add(registry, owner);
+        ClientSession second = add(registry, owner);
+        StubTransport disconnected = new StubTransport();
+        registry.bind(first.id(), disconnected, 64, 1);
+
+        disconnected.disconnectUnexpectedly();
+        registry.assertCapacityForSession(second.id(), 64, 1);
+        registry.bind(second.id(), new StubTransport(), 64, 1);
+
+        assertThat(registry.activeConnectionCount()).isEqualTo(1);
+        assertThat(registry.activeUserCount()).isEqualTo(1);
+        registry.close();
+    }
+
+    @Test
+    void sameSessionCanReloginWithoutConsumingAnotherConnectionSlot() {
+        ClientRuntimeRegistry registry = new ClientRuntimeRegistry();
+        ClientSession session = add(registry, UUID.randomUUID());
+        StubTransport previous = new StubTransport();
+        StubTransport replacement = new StubTransport();
+        registry.bind(session.id(), previous, 64, 1);
+
+        registry.assertCapacityForSession(session.id(), 64, 1);
+        registry.bind(session.id(), replacement, 64, 1);
+
+        assertThat(previous.connected()).isFalse();
+        assertThat(registry.isCurrent(session.id(), replacement)).isTrue();
+        assertThat(registry.activeConnectionCount()).isEqualTo(1);
+        registry.close();
+    }
+
+    @Test
+    void delayedOldDisconnectCannotUnbindTheReplacementConnection() {
+        ClientRuntimeRegistry registry = new ClientRuntimeRegistry();
+        ClientSession session = add(registry, UUID.randomUUID());
+        StubTransport previous = new StubTransport();
+        StubTransport replacement = new StubTransport();
+        registry.bind(session.id(), previous, 64, 1);
+        registry.bind(session.id(), replacement, 64, 1);
+
+        assertThat(registry.releaseIfCurrent(session.id(), previous)).isFalse();
+        assertThat(registry.isCurrent(session.id(), replacement)).isTrue();
+        assertThat(registry.releaseIfCurrent(session.id(), replacement)).isTrue();
+        assertThat(registry.activeConnectionCount()).isZero();
+        registry.close();
+    }
+
     private static ClientSession add(ClientRuntimeRegistry registry, UUID ownerId) {
         ClientSession session = new ClientSession(UUID.randomUUID(), ownerId);
         registry.add(session);
@@ -72,6 +123,11 @@ class ClientRuntimeRegistryTest {
     }
 
     private static final class StubTransport implements GameTransportPort {
+        private boolean live = true;
+
+        void disconnectUnexpectedly() {
+            live = false;
+        }
         @Override
         public void connect(GameCredential credential, Consumer<ProtocolResponse> eventSink) {
         }
@@ -92,7 +148,7 @@ class ClientRuntimeRegistryTest {
 
         @Override
         public boolean connected() {
-            return true;
+            return live;
         }
 
         @Override
@@ -115,6 +171,7 @@ class ClientRuntimeRegistryTest {
 
         @Override
         public void close() {
+            live = false;
         }
     }
 }
