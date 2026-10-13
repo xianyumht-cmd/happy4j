@@ -42,6 +42,10 @@ public class OpenAiDecisionService {
             你只能使用请求里给出的公开信息，不得假设对手暗牌。农民必须考虑队友配合，避免无意义压队友；
             地主需要控制出牌权并优先形成可连续出完的牌路。明确区分自己是地主还是农民；
             农民面对地主即将出完牌时必须考虑主动压制；当队友掌握出牌权且没有迫切威胁时可以不出。
+            注意：只有lastPlaySeat等于队友座位时才是队友控牌。若lastPlaySeat等于地主座位，
+            即使队友下一位可能跟牌，也不能断言队友已经控牌或必然能够压制地主。
+            当地主剩余五张及以下且有合法压制动作时，优先阻断地主，不要习惯性不出。
+            地主与两个农民是对抗关系；地主绝无队友。不得将地主的牌描述为队友的出牌。
             只凭可验证的牌局信息决策，不得猜测未知手牌。必须从options中选择一个choice，禁止创造新动作。
             只返回一行JSON：{"choice":整数,"reason":"不超过80字的中文理由","confidence":0到1的小数}
             """;
@@ -85,11 +89,17 @@ public class OpenAiDecisionService {
         Duration timeout = switch (phase) {
             case "DOUBLE" -> Duration.ofSeconds(4);
             case "ORDER" -> Duration.ofSeconds(8);
-            default -> Duration.ofSeconds(12);
+            default -> Duration.ofSeconds(8);
         };
         long started = System.nanoTime();
-        return call(provider, SYSTEM_PROMPT, prompt, timeout, 2).thenApply(reply -> {
-            JsonNode decision = parseDecision(reply.content());
+        return call(provider, SYSTEM_PROMPT, prompt, timeout, phase.equals("PLAY") ? 1 : 2).thenApply(reply -> {
+            JsonNode decision;
+            try {
+                decision = parseDecision(reply.content());
+            } catch (IllegalStateException error) {
+                throw new IllegalStateException(error.getMessage()
+                        + " (finish_reason=" + reply.finishReason() + ")", error);
+            }
             int choice = decision.path("choice").asInt(-1);
             if (choice < 0 || choice >= options.size())
                 throw new IllegalStateException("大模型返回了无效选项");
@@ -188,6 +198,11 @@ public class OpenAiDecisionService {
             state.put("myHand", cards(table.hand()));
             state.put("bottomCards", cards(table.bottomCards()));
             state.put("lastPlaySeat", table.lastPlaySeatId());
+            state.put("lastPlaySide", table.lastPlaySeatId() < 0 ? "NONE"
+                    : table.lastPlaySeatId() == table.landlordSeatId() ? "LANDLORD" : "FARMER");
+            state.put("landlordCardsLeft", table.players().stream()
+                    .filter(player -> player.seatId() == table.landlordSeatId())
+                    .map(TableSnapshot.Player::cardCount).findFirst().orElse(-1));
             state.put("lastPlayType", table.lastPlayType());
             state.put("lastPlay", cards(table.lastPlay()));
             state.put("players", table.players().stream().map(player -> Map.of(
