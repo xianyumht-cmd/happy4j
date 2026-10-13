@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { tableFingerprint } from './use-game-ai.js'
+import { hallSessionReady, tableFingerprint } from './use-game-ai.js'
 
 const card = (code) => ({ code })
 
@@ -49,5 +49,29 @@ describe('AI 牌桌快照指纹', () => {
 
     expect(first.actionHistory).toHaveLength(second.actionHistory.length)
     expect(tableFingerprint(first, 5000)).not.toBe(tableFingerprint(second, 5000))
+  })
+})
+
+describe('game hall command readiness', () => {
+  it('waits for the Lotus hall connection before issuing automatic lobby commands', () => {
+    for (const phase of [
+      'CREATED',
+      'QR_READY',
+      'QR_SCANNED',
+      'PLATFORM_AUTHENTICATED',
+      'GAME_AUTHENTICATING',
+      'DISCONNECTED',
+      'EVICTED',
+      'FAILED',
+    ]) {
+      expect(hallSessionReady({ phase })).toBe(false)
+    }
+    expect(hallSessionReady(null)).toBe(false)
+  })
+
+  it('keeps gameplay phases eligible after the lobby has connected', () => {
+    for (const phase of ['HALL_CONNECTED', 'ENTERING_ROOM', 'AT_TABLE', 'READY', 'PLAYING']) {
+      expect(hallSessionReady({ phase })).toBe(true)
+    }
   })
 })
