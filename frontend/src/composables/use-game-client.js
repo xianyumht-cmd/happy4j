@@ -142,8 +142,7 @@ export function useGameClient() {
     if (envelope.type === 'QR_STATUS') {
       const result = envelope.payload
       if (result?.sessionId !== qr.sessionId || qr.completed) return
-      if (result.status === 'CONFIRMED')
-        qr.status = '扫码已确认，正在验证游戏账号并连接大厅'
+      if (result.status === 'CONFIRMED') qr.status = '扫码已确认，正在验证游戏账号并连接大厅'
       else qr.status = playerMessage(result.message)
     }
     if (envelope.type === 'ERROR' && !envelope.requestId)

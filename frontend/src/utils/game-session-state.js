@@ -1,10 +1,4 @@
-const HALL_READY_PHASES = new Set([
-  'HALL_CONNECTED',
-  'ENTERING_ROOM',
-  'AT_TABLE',
-  'READY',
-  'PLAYING',
-])
+const HALL_READY_PHASES = new Set(['HALL_CONNECTED', 'ENTERING_ROOM', 'AT_TABLE', 'READY', 'PLAYING'])
 const INACTIVE_PHASES = new Set(['FAILED', 'DISCONNECTED', 'EVICTED'])
 
 export function hallReady(session) {
@@ -46,8 +40,7 @@ export function chooseActiveSession(sessions, currentId = null, preferredId = nu
   const ready = candidates.find(hallReady)
   if (ready) return ready.id
 
-  if (currentId && sessions[currentId] && !INACTIVE_PHASES.has(sessions[currentId].phase))
-    return currentId
+  if (currentId && sessions[currentId] && !INACTIVE_PHASES.has(sessions[currentId].phase)) return currentId
 
   const available = candidates.find((session) => !INACTIVE_PHASES.has(session.phase))
   return available?.id || candidates[0].id

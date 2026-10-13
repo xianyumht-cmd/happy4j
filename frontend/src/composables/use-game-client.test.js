@@ -27,8 +27,7 @@ vi.mock('@/services/game-socket.js', () => ({
     async command(name, payload = {}) {
       if (name === 'SESSION_RESUME') throw new Error('no saved session')
       if (name === 'SESSION_CREATE') return { id: 'created', phase: 'CREATED', uin: 0 }
-      if (name === 'QR_START')
-        return { sessionId: payload.sessionId, image: 'data:image/png;base64,preview' }
+      if (name === 'QR_START') return { sessionId: payload.sessionId, image: 'data:image/png;base64,preview' }
       return null
     }
 
