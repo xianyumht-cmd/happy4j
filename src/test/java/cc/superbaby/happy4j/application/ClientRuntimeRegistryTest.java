@@ -65,6 +65,48 @@ class ClientRuntimeRegistryTest {
         registry.close();
     }
 
+    @Test
+    void staleLotusConnectionDoesNotBlockFreshQrLoginForSameUser() {
+        ClientRuntimeRegistry registry = new ClientRuntimeRegistry();
+        UUID ownerId = UUID.randomUUID();
+        ClientSession previous = add(registry, ownerId);
+        StubTransport previousTransport = new StubTransport();
+        registry.bind(previous.id(), previousTransport, 64, 1);
+
+        previousTransport.failConnection();
+        ClientSession next = add(registry, ownerId);
+        StubTransport nextTransport = new StubTransport();
+        registry.assertCapacity(ownerId, 64, 1);
+        registry.bind(next.id(), nextTransport, 64, 1);
+
+        assertThat(previousTransport.closed).isTrue();
+        assertThat(registry.connected(previous.id())).isFalse();
+        assertThat(registry.connection(next.id())).isSameAs(nextTransport);
+        assertThat(registry.activeConnectionCount()).isEqualTo(1);
+        registry.close();
+    }
+
+    @Test
+    void staleConnectionReapingKeepsOtherHealthyPlayersConnected() {
+        ClientRuntimeRegistry registry = new ClientRuntimeRegistry();
+        ClientSession stale = add(registry, UUID.randomUUID());
+        ClientSession healthy = add(registry, UUID.randomUUID());
+        StubTransport staleTransport = new StubTransport();
+        StubTransport healthyTransport = new StubTransport();
+        registry.bind(stale.id(), staleTransport, 2, 1);
+        registry.bind(healthy.id(), healthyTransport, 2, 1);
+
+        staleTransport.failConnection();
+        ClientSession replacement = add(registry, UUID.randomUUID());
+        registry.bind(replacement.id(), new StubTransport(), 2, 1);
+
+        assertThat(staleTransport.closed).isTrue();
+        assertThat(healthyTransport.closed).isFalse();
+        assertThat(registry.connection(healthy.id())).isSameAs(healthyTransport);
+        assertThat(registry.activeConnectionCount()).isEqualTo(2);
+        registry.close();
+    }
+
     private static ClientSession add(ClientRuntimeRegistry registry, UUID ownerId) {
         ClientSession session = new ClientSession(UUID.randomUUID(), ownerId);
         registry.add(session);
@@ -72,6 +114,13 @@ class ClientRuntimeRegistryTest {
     }
 
     private static final class StubTransport implements GameTransportPort {
+        private boolean alive = true;
+        private boolean closed;
+
+        void failConnection() {
+            alive = false;
+        }
+
         @Override
         public void connect(GameCredential credential, Consumer<ProtocolResponse> eventSink) {
         }
@@ -92,7 +141,7 @@ class ClientRuntimeRegistryTest {
 
         @Override
         public boolean connected() {
-            return true;
+            return alive;
         }
 
         @Override
@@ -115,6 +164,8 @@ class ClientRuntimeRegistryTest {
 
         @Override
         public void close() {
+            alive = false;
+            closed = true;
         }
     }
 }
