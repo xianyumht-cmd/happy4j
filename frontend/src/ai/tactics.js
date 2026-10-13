@@ -61,3 +61,33 @@ export function urgentLandlordResponse(table, candidates, selectedCards) {
     .sort((a, b) => a.cost - b.cost)
   return options[0]?.cards || null
 }
+
+/**
+ * Four isolated singles are not a run-out plan. On a free landlord lead,
+ * spending the highest singleton first removes our best chance to regain
+ * control after an opponent beats the next low card.
+ *
+ * This is a narrow late-game guard, not a perfect-information solver.
+ * It does not intervene if an opponent has two or fewer cards, if any
+ * non-single move is available, or if the model did not pick the top single.
+ */
+export function preserveLandlordSingleControl(table, candidates, selectedCards) {
+  if (table?.stage !== 'PLAYING' || Number(table.turnSeatId) !== Number(table.seatId)) return null
+  if (Number(table.seatId) !== Number(table.landlordSeatId)) return null
+  if (!table.availableActions?.includes('PLAY')) return null
+  if (table.lastPlay?.length && Number(table.lastPlaySeatId) !== Number(table.seatId)) return null
+  if (!Array.isArray(table.hand) || table.hand.length < 3 || table.hand.length > 5) return null
+  if (!selectedCards || selectedCards.length !== 1) return null
+
+  const others = (table.players || []).filter((player) => Number(player.seatId) !== Number(table.seatId))
+  if (others.length !== 2 || others.some((player) => !Number.isInteger(player.cardCount) || player.cardCount <= 2))
+    return null
+  const moves = candidates || []
+  if (moves.length !== table.hand.length || moves.some((cards) => cards.length !== 1)) return null
+  const sorted = [...moves].sort((a, b) => nativeRank(a[0]) - nativeRank(b[0]))
+  const weakest = sorted[0][0]
+  const strongest = sorted.at(-1)[0]
+  if (nativeRank(weakest) >= nativeRank(strongest)) return null
+  if (nativeRank(selectedCards[0]) !== nativeRank(strongest)) return null
+  return sorted[0]
+}
