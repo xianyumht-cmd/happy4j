@@ -10,6 +10,7 @@ import cc.superbaby.happy4j.protocol.game.MiniGameActionProtocol;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
+import org.springframework.beans.factory.annotation.Value;
 
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
@@ -34,11 +35,14 @@ import java.util.concurrent.TimeUnit;
 @Service
 public class OpenAiDecisionService {
     private static final Logger log = LoggerFactory.getLogger(OpenAiDecisionService.class);
-    private static final int MAX_OUTPUT_TOKENS = 256;
+    @Value("${happy4j.ai.max-output-tokens:${HAPPY4J_AI_MAX_OUTPUT_TOKENS:1024}}")
+    private int maxOutputTokens = 1024;
     private static final String SYSTEM_PROMPT = """
             你是精通经典三人斗地主的决策模型。你的唯一目标是最大化当前玩家本局获胜概率。
             你只能使用请求里给出的公开信息，不得假设对手暗牌。农民必须考虑队友配合，避免无意义压队友；
-            地主需要控制出牌权并优先形成可连续出完的牌路。必须从options中选择一个choice，禁止创造新动作。
+            地主需要控制出牌权并优先形成可连续出完的牌路。明确区分自己是地主还是农民；
+            农民面对地主即将出完牌时必须考虑主动压制；当队友掌握出牌权且没有迫切威胁时可以不出。
+            只凭可验证的牌局信息决策，不得猜测未知手牌。必须从options中选择一个choice，禁止创造新动作。
             只返回一行JSON：{"choice":整数,"reason":"不超过80字的中文理由","confidence":0到1的小数}
             """;
 
@@ -67,6 +71,15 @@ public class OpenAiDecisionService {
         if (table == null) return CompletableFuture.failedFuture(new IllegalStateException("牌桌状态尚未同步"));
         String phase = payload.path("phase").asString().trim().toUpperCase(Locale.ROOT);
         List<Option> options = options(phase, session, table, payload.path("candidates"));
+        if (options.size() == 1) {
+            Option only = options.get(0);
+            return CompletableFuture.completedFuture(new DecisionResult(0, only.action(),
+                    only.cardCodes(), "当前只有一个合法选择", 1, "RULE_ENGINE", 0, 0, "not_applicable"));
+        }
+        if (phase.equals("PLAY") && (table.seatId() < 0 || table.seatId() > 2
+                || table.landlordSeatId() < 0 || table.landlordSeatId() > 2
+                || table.players().stream().noneMatch(player -> player.seatId() == table.landlordSeatId())))
+            return CompletableFuture.failedFuture(new IllegalStateException("地主身份或座位状态尚未同步"));
         var provider = configurations.provider(userId);
         String prompt = prompt(phase, table, options);
         Duration timeout = switch (phase) {
@@ -85,7 +98,7 @@ public class OpenAiDecisionService {
             if (reason.length() > 160) reason = reason.substring(0, 160);
             double confidence = Math.max(0, Math.min(1, decision.path("confidence").asDouble(0.5)));
             return new DecisionResult(choice, selected.action(), selected.cardCodes(), reason, confidence,
-                    reply.model(), elapsedMillis(started), reply.totalTokens());
+                    reply.model(), elapsedMillis(started), reply.totalTokens(), reply.finishReason());
         });
     }
 
@@ -164,8 +177,13 @@ public class OpenAiDecisionService {
             Map<String, Object> state = new LinkedHashMap<>();
             state.put("phase", phase);
             state.put("mySeat", table.seatId());
+            state.put("myRole", table.landlordSeatId() < 0 ? "UNDETERMINED"
+                    : table.seatId() == table.landlordSeatId() ? "LANDLORD" : "FARMER");
             state.put("landlordSeat", table.landlordSeatId());
             state.put("turnSeat", table.turnSeatId());
+            state.put("teammateSeats", table.landlordSeatId() < 0 || table.seatId() == table.landlordSeatId()
+                    ? List.of() : table.players().stream().map(TableSnapshot.Player::seatId)
+                    .filter(seat -> seat != table.landlordSeatId() && seat != table.seatId()).toList());
             state.put("multiplier", table.multiplier());
             state.put("myHand", cards(table.hand()));
             state.put("bottomCards", cards(table.bottomCards()));
@@ -204,7 +222,7 @@ public class OpenAiDecisionService {
             Map<String, Object> body = new LinkedHashMap<>();
             body.put("model", provider.model());
             body.put("stream", false);
-            body.put("max_tokens", MAX_OUTPUT_TOKENS);
+            body.put("max_tokens", Math.max(256, Math.min(4096, maxOutputTokens)));
             body.put("messages", List.of(
                     Map.of("role", "system", "content", system),
                     Map.of("role", "user", "content", user)));
@@ -260,9 +278,12 @@ public class OpenAiDecisionService {
             }
             JsonNode message = root.path("choices").path(0).path("message").path("content");
             String content = content(message);
-            if (content.isBlank()) throw new IllegalStateException("大模型未返回决策内容");
+            String finishReason = root.path("choices").path(0).path("finish_reason").asString("");
+            if (content.isBlank()) throw new IllegalStateException(
+                    finishReason.equals("length") ? "大模型输出达到token上限，未返回有效决策"
+                            : "大模型未返回决策内容");
             return new ModelReply(content, root.path("model").asString(configuredModel),
-                    root.path("usage").path("total_tokens").asInt());
+                    root.path("usage").path("total_tokens").asInt(), finishReason);
         } catch (IllegalStateException failure) {
             throw failure;
         } catch (Exception failure) {
@@ -343,7 +364,7 @@ public class OpenAiDecisionService {
         }
     }
 
-    private record ModelReply(String content, String model, int totalTokens) {
+    private record ModelReply(String content, String model, int totalTokens, String finishReason) {
     }
 
     private static final class ProviderCallException extends RuntimeException {
@@ -362,7 +383,7 @@ public class OpenAiDecisionService {
 
     public record DecisionResult(int choice, String action, List<Integer> cards,
                                  String reason, double confidence, String model,
-                                 long latencyMs, int totalTokens) {
+                                 long latencyMs, int totalTokens, String finishReason) {
     }
 
     public record TestResult(String model, long latencyMs, int totalTokens, String message) {
