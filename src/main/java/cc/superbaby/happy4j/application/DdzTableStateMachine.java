@@ -70,6 +70,7 @@ public final class DdzTableStateMachine {
             }
             case GAME_START -> {
                 players = clearPlayerReady(players);
+                history = List.of();
                 stage = GameStage.DEALING;
                 actions = List.of();
                 operationSeconds = 0;
@@ -135,6 +136,7 @@ public final class DdzTableStateMachine {
         switch (event.type()) {
             case INITIAL_HAND -> {
                 settlement = TableSnapshot.Settlement.empty();
+                history = List.of();
                 if (!event.cards().isEmpty()) hand = cards(event.cards());
                 players = initialPlayers(players, current.seatId(), hand.size());
                 stage = GameStage.CALLING_LANDLORD;
@@ -186,7 +188,8 @@ public final class DdzTableStateMachine {
                 turnSeat = -1;
                 operationSeconds = 0;
                 prompt = "本局结束：可再来一局、换桌或退出房间";
-                history = appendHistory(history, players, -1, "本局结束", List.of());
+                if (current.stage() != GameStage.SETTLED)
+                    history = appendHistory(history, players, -1, "本局结束", List.of());
             }
             case ORDER -> {
                 turnSeat = event.nextSeat();
@@ -287,6 +290,7 @@ public final class DdzTableStateMachine {
             }
             case DEAL_START -> {
                 settlement = TableSnapshot.Settlement.empty();
+                history = List.of();
                 stage = GameStage.DEALING;
                 actions = List.of();
                 trusted = false;
