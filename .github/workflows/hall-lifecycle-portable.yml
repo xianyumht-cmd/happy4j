@@ -1,0 +1,104 @@
+name: Happy4J hall lifecycle portable preview
+
+on:
+  push:
+    branches: [fix/original-lotus-session-lifecycle]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: hall-lifecycle-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify-and-package:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Build and run all regression tests
+        run: ./gradlew clean test bootJar --no-daemon
+      - name: Validate original DouZero assets and create versioned archive
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -s build/libs/happy4j-0.0.1-SNAPSHOT.jar
+          jar tf build/libs/happy4j-0.0.1-SNAPSHOT.jar > build/happy4j-jar-members.txt
+          grep -Fxq 'BOOT-INF/classes/static/index.html' build/happy4j-jar-members.txt
+          grep -Fxq 'BOOT-INF/classes/static/models/douzero_fullauto/landlord.onnx' build/happy4j-jar-members.txt
+          grep -Fxq 'BOOT-INF/classes/static/models/douzero_fullauto/landlord_up.onnx' build/happy4j-jar-members.txt
+          grep -Fxq 'BOOT-INF/classes/static/models/douzero_fullauto/landlord_down.onnx' build/happy4j-jar-members.txt
+          mkdir -p dist/stage
+          cp build/libs/happy4j-0.0.1-SNAPSHOT.jar dist/stage/
+          (cd dist/stage && sha256sum happy4j-0.0.1-SNAPSHOT.jar > SHA256SUMS.txt)
+          printf 'base_commit=37be0f1a39da66eedad8026dfa1dad8ca8caa424\nsource_commit=%s\nchange_scope=hall-lifecycle-only\n' "$GITHUB_SHA" > dist/stage/BUILD-INFO.txt
+          SHORT_SHA="${GITHUB_SHA:0:10}"
+          (cd dist/stage && zip -q -9 -r "../happy4j-hall-fix-$SHORT_SHA.zip" .)
+          sha256sum dist/happy4j-hall-fix-*.zip
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: hall-fix-${{ github.sha }}
+          path: dist/happy4j-hall-fix-*.zip
+          if-no-files-found: error
+          retention-days: 14
+
+  windows-verify:
+    needs: verify-and-package
+    runs-on: windows-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: hall-fix-${{ github.sha }}
+          path: downloaded
+      - name: Validate package checksum and JAR on Windows
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $zip = Get-ChildItem downloaded -Filter '*.zip' | Select-Object -First 1
+          if (-not $zip) { throw 'No release ZIP found' }
+          Expand-Archive -LiteralPath $zip.FullName -DestinationPath extracted
+          $jar = Join-Path (Get-Location) 'extracted\happy4j-0.0.1-SNAPSHOT.jar'
+          $expected = ((Get-Content 'extracted\SHA256SUMS.txt') | Select-Object -First 1).Split(' ')[0]
+          $actual = (Get-FileHash -LiteralPath $jar -Algorithm SHA256).Hash
+          if ($actual -ine $expected) { throw 'Windows SHA256 mismatch' }
+          $info = Get-Content 'extracted\BUILD-INFO.txt' -Raw
+          if ($info -notmatch 'change_scope=hall-lifecycle-only') { throw 'Invalid package metadata' }
+          Write-Host 'Windows hash verification passed'
+
+  publish:
+    needs: windows-verify
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: hall-fix-${{ github.sha }}
+          path: packaged
+      - name: Publish GitHub prerelease
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          FILE=$(find packaged -maxdepth 1 -name 'happy4j-hall-fix-*.zip' -type f -print -quit)
+          test -n "$FILE"
+          SHORT_SHA="${GITHUB_SHA:0:10}"
+          gh release create "hall-fix-$SHORT_SHA" "$FILE" \
+            --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
+            --title "Happy4J original hall lifecycle fix $SHORT_SHA" \
+            --notes "Based on upstream original 37be0f1a39. Releases disconnected Lotus connections so a new QR login can succeed; suppresses AI hall commands before the hall session is ready. Does not alter DouZero weights, game tactics, legal-move enumeration or OpenAI decision logic. Tested using Java 17 + Node 24 and Windows JAR checksum. Keep MySQL and configs; backup the old JAR before applying. Not merged to main." \
+            --prerelease --latest=false
