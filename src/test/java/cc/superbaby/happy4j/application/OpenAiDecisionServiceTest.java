@@ -103,6 +103,59 @@ class OpenAiDecisionServiceTest {
         assertThat(requests).hasValue(3);
     }
 
+    @Test
+    void skipsProviderWhenOnlyOneLegalMoveExists() throws Exception {
+        UUID userId = UUID.randomUUID();
+        AiConfigurationService configurations = mock(AiConfigurationService.class);
+        var service = new OpenAiDecisionService(configurations,
+                HttpClient.newBuilder().build(), new JsonMapper());
+        ClientSession session = new ClientSession(UUID.randomUUID(), userId);
+        session.table(table());
+        var payload = new JsonMapper().readTree("{\"phase\":\"PLAY\",\"candidates\":[[]]}");
+
+        var result = service.decide(userId, session, payload).get(2, TimeUnit.SECONDS);
+
+        assertThat(result.action()).isEqualTo("PASS");
+        assertThat(result.model()).isEqualTo("RULE_ENGINE");
+        assertThat(result.totalTokens()).isZero();
+        assertThat(result.finishReason()).isEqualTo("not_applicable");
+        org.mockito.Mockito.verifyNoInteractions(configurations);
+    }
+
+    @Test
+    void acceptsNamespacedOpenRouterModelAndCapturesFinishReason() throws Exception {
+        AtomicReference<String> requestBody = new AtomicReference<>();
+        server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/v1/chat/completions", exchange -> {
+            requestBody.set(new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8));
+            byte[] response = """
+                    {"model":"openai/gpt-6-luna","choices":[{"finish_reason":"stop","message":{"role":"assistant","content":"{\"choice\":0,\"reason\":\"拦截地主\",\"confidence\":0.9}"}}],"usage":{"total_tokens":84}}
+                    """.getBytes(StandardCharsets.UTF_8);
+            exchange.getResponseHeaders().set("Content-Type", "application/json");
+            exchange.sendResponseHeaders(200, response.length);
+            exchange.getResponseBody().write(response);
+            exchange.close();
+        });
+        server.start();
+        UUID userId = UUID.randomUUID();
+        AiConfigurationService configurations = mock(AiConfigurationService.class);
+        when(configurations.provider(userId)).thenReturn(new AiConfigurationService.ProviderConfiguration(
+                URI.create("http://127.0.0.1:" + server.getAddress().getPort() + "/v1/chat/completions"),
+                "openai/gpt-6-luna", "test-key"));
+        var service = new OpenAiDecisionService(configurations,
+                HttpClient.newBuilder().build(), new JsonMapper());
+        ClientSession session = new ClientSession(UUID.randomUUID(), userId);
+        session.table(table());
+        var payload = new JsonMapper().readTree("{\"phase\":\"PLAY\",\"candidates\":[[4],[]]}");
+
+        var result = service.decide(userId, session, payload).get(5, TimeUnit.SECONDS);
+
+        assertThat(result.model()).isEqualTo("openai/gpt-6-luna");
+        assertThat(result.finishReason()).isEqualTo("stop");
+        assertThat(requestBody.get()).contains("openai/gpt-6-luna", "\\"max_tokens\\":1024")
+                .doesNotContain("test-key");
+    }
+
     private static TableSnapshot table() {
         List<TableSnapshot.Player> players = List.of(
                 new TableSnapshot.Player(1, "我", 0, 1, 1000, false),
