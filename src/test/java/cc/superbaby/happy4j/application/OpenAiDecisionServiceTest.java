@@ -71,9 +71,12 @@ class OpenAiDecisionServiceTest {
         assertThat(result.confidence()).isEqualTo(0.86);
         assertThat(result.totalTokens()).isEqualTo(321);
         assertThat(authorization.get()).isEqualTo("Bearer secret-key");
-        assertThat(requestBody.get()).contains("expert-ddz", "options", "messages",
-                "\"myRole\":\"FARMER\"", "\"lastPlaySide\":\"LANDLORD\"", "\"landlordCardsLeft\":8")
+        assertThat(requestBody.get()).contains("expert-ddz", "options", "messages")
                 .doesNotContain("secret-key");
+        String prompt = new JsonMapper().readTree(requestBody.get())
+                .path("messages").path(1).path("content").asString();
+        assertThat(prompt).contains("\"myRole\":\"FARMER\"", "\"lastPlaySide\":\"LANDLORD\"",
+                "\"landlordCardsLeft\":8");
     }
 
     @Test
