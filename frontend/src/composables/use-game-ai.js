@@ -347,6 +347,7 @@ export function useGameAi(client) {
       providerLatencyMs: result.providerLatencyMs,
       providerTokens: result.providerTokens,
       providerReason: result.providerReason,
+      providerFinishReason: result.providerFinishReason,
       confidence: result.confidence,
     })
     await act(
@@ -385,6 +386,7 @@ export function useGameAi(client) {
       providerLatencyMs: response.latencyMs,
       providerTokens: response.totalTokens,
       providerReason: response.reason,
+      providerFinishReason: response.finishReason,
       confidence: response.confidence,
     }
   }
