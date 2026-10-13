@@ -302,8 +302,11 @@ export function useGameAi(client) {
   }
 
   async function decidePlay(table, fingerprint) {
-    if (![0, 1, 2].includes(Number(table.landlordSeatId)) ||
-        ![0, 1, 2].includes(Number(table.seatId)) || !table.hand?.length) {
+    if (
+      ![0, 1, 2].includes(Number(table.landlordSeatId)) ||
+      ![0, 1, 2].includes(Number(table.seatId)) ||
+      !table.hand?.length
+    ) {
       runtime.status = '牌桌身份或手牌状态未完成同步，暂不自动出牌'
       return
     }
@@ -395,7 +398,15 @@ export function useGameAi(client) {
     const cards = selectedCodes.map((code) => table.hand.find((card) => card.code === code)).filter(Boolean)
     if (cards.length !== selectedCodes.length) throw new Error('大模型返回的手牌已发生变化')
     const selectedKey = [...selectedCodes].sort((a, b) => a - b).join(',')
-    if (!candidates.some((candidate) => candidate.map((card) => card.code).sort((a, b) => a - b).join(',') === selectedKey))
+    if (
+      !candidates.some(
+        (candidate) =>
+          candidate
+            .map((card) => card.code)
+            .sort((a, b) => a - b)
+            .join(',') === selectedKey,
+      )
+    )
       throw new Error('大模型返回了候选列表之外的出牌动作')
     runtime.modelState = 'READY'
     return {
@@ -516,8 +527,11 @@ export function useGameAi(client) {
           const localResult = table.settlement?.players?.find(
             (player) => Number(player.seatId) === Number(table.seatId),
           )
-          log('INFO', 'SETTLEMENT',
-            `第 ${runtime.rounds} 局${won === true ? '胜利' : won === false ? '失利' : '结果待确认'}，同步结算余额`, {
+          log(
+            'INFO',
+            'SETTLEMENT',
+            `第 ${runtime.rounds} 局${won === true ? '胜利' : won === false ? '失利' : '结果待确认'}，同步结算余额`,
+            {
               auditVersion: 1,
               settlementId: currentSettlement,
               won,
@@ -525,7 +539,8 @@ export function useGameAi(client) {
               beans: localResult?.beans ?? session.beans,
               landlordSeatId: table.landlordSeatId,
               localSeatId: table.seatId,
-            })
+            },
+          )
           await refreshWallet(`${fingerprint}:settlement`)
           return
         }

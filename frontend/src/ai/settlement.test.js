@@ -66,6 +66,8 @@ describe('audited round statistics', () => {
         }),
       ),
     ).toBeNull()
-    expect(settlementOutcome(table({ settlement: { players: [{ seatId: 0, remainingCards: [] }] } }))).toBeNull()
+    expect(
+      settlementOutcome(table({ settlement: { players: [{ seatId: 0, remainingCards: [] }] } })),
+    ).toBeNull()
   })
 })

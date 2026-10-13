@@ -3,12 +3,18 @@
 export function immediateWinningMove(table, candidates) {
   if (table?.stage !== 'PLAYING' || Number(table.turnSeatId) !== Number(table.seatId)) return null
   if (!table.availableActions?.includes('PLAY') || !table.hand?.length) return null
-  const hand = table.hand.map((card) => card.code).sort((a, b) => a - b).join(',')
+  const hand = table.hand
+    .map((card) => card.code)
+    .sort((a, b) => a - b)
+    .join(',')
   return (
     candidates.find(
       (candidate) =>
         candidate.length === table.hand.length &&
-        candidate.map((card) => card.code).sort((a, b) => a - b).join(',') === hand,
+        candidate
+          .map((card) => card.code)
+          .sort((a, b) => a - b)
+          .join(',') === hand,
     ) || null
   )
 }

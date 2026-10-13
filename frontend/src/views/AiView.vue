@@ -63,7 +63,10 @@ function time(value) {
       <section class="ai-page-metrics">
         <article>
           <span>有效对局胜率</span><b>{{ winRate }}</b
-          ><small>{{ runtime?.wins || 0 }} 胜 / {{ runtime?.losses || 0 }} 负 · {{ runtime?.unknown || 0 }} 待确认</small>
+          ><small
+            >{{ runtime?.wins || 0 }} 胜 / {{ runtime?.losses || 0 }} 负 ·
+            {{ runtime?.unknown || 0 }} 待确认</small
+          >
         </article>
         <article>
           <span>完成对局</span><b>{{ runtime?.rounds || 0 }}</b
