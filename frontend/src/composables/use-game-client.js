@@ -63,11 +63,11 @@ export function useGameClient() {
   function updateSession(snapshot, preferred = false) {
     if (!snapshot?.id) return
     state.sessions[snapshot.id] = snapshot
-    const qrTarget = qr.sessionId === snapshot.id ? snapshot.id : null
+    const qrTarget = !qr.completed && qr.sessionId && state.sessions[qr.sessionId] ? qr.sessionId : null
     state.activeSessionId = chooseActiveSession(
       state.sessions,
       state.activeSessionId,
-      preferred || qrTarget ? snapshot.id : null,
+      preferred ? snapshot.id : qrTarget,
     )
     syncQrProgress(snapshot)
     const active = state.sessions[state.activeSessionId]
@@ -123,7 +123,7 @@ export function useGameClient() {
       state.activeSessionId = chooseActiveSession(
         state.sessions,
         state.activeSessionId,
-        qr.sessionId,
+        qr.completed ? null : qr.sessionId,
       )
       if (!state.activeSessionId) {
         try {
