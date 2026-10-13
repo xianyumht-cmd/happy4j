@@ -3,7 +3,7 @@ import { chooseFullAutoBid, chooseFullAutoDouble, chooseFullAutoMove } from '@/a
 import { enumerateLegalMoves } from '@/ai/legal-moves.js'
 import { chooseDoubleDecision, chooseLandlordDecision } from '@/ai/policy.js'
 import { settlementIdentity, settlementOutcome } from '@/ai/settlement.js'
-import { immediateWinningMove } from '@/ai/tactics.js'
+import { immediateWinningMove, urgentLandlordResponse } from '@/ai/tactics.js'
 
 const SUPPORT_MISSION_ID = 1563
 const SUPER_DOUBLE_ITEM_ID = 1030108
@@ -15,6 +15,7 @@ const REASON_LABELS = Object.freeze({
   WP_STRATEGIC_PASS: '欢乐斗地主 WP 模型主动选择不出',
   WP_MAX_Q: '欢乐斗地主 WP 模型选择最高评分动作',
   TACTICAL_WIN_NOW: '检测到可以立即出完，执行制胜动作',
+  TACTICAL_BLOCK_LANDLORD: '地主残局警戒：有合法压制牌时不盲目过牌',
   ONLY_LEGAL_MOVE: '当前只有一个合法出牌动作',
   MODEL_FALLBACK: '模型暂不可用，执行合法保底动作',
   INCOMPLETE_STATE_HEURISTIC: '公开牌历史不完整，使用保牌型残局策略',
@@ -324,15 +325,33 @@ export function useGameAi(client) {
     runtime.status = openAiEnabled() ? '大模型正在计算最优出牌' : 'DouZero FullAuto ResNet 正在计算最优出牌'
     const startedAt = performance.now()
     let providerFailure = null
-    const result = openAiEnabled()
+    let result = openAiEnabled()
       ? await chooseOpenAiMove(table).catch(async (error) => {
           providerFailure = error.message
           log('ERROR', 'OPENAI', '大模型决策失败，已切换本地模型', { message: error.message })
           return chooseFullAutoMove(table, setModelState)
         })
       : await chooseFullAutoMove(table, setModelState)
-    if (!runtime.active || before !== tableFingerprint(client.table.value, client.session.value?.beans))
+    if (!runtime.active || before !== tableFingerprint(client.table.value, client.session.value?.beans)) {
+      if (runtime.active) {
+        log('INFO', 'INFERENCE', '等待决策期间牌局已变化，废弃过时动作', {
+          elapsedMs: Math.round(performance.now() - startedAt),
+          providerFailure,
+        })
+      }
       return
+    }
+    const urgent = urgentLandlordResponse(table, enumerateLegalMoves(table), result.cards)
+    if (urgent) {
+      log('INFO', 'TACTICS', '地主即将走完，已将不出改为合法压制动作', {
+        landlordCardsLeft: table.players?.find(
+          (player) => Number(player.seatId) === Number(table.landlordSeatId),
+        )?.cardCount,
+        providerReason: result.providerReason,
+        cards: urgent.map((card) => card.code),
+      })
+      result = { ...result, cards: urgent, reason: 'TACTICAL_BLOCK_LANDLORD', tacticalOverride: true }
+    }
     const elapsed = Math.round(performance.now() - startedAt)
     const pass = result.cards.length === 0
     const strategy = result.fallback ? ' · 保底策略' : ''
@@ -352,6 +371,7 @@ export function useGameAi(client) {
             ? 'RULES'
             : 'DOUZERO',
       providerFailure,
+      tacticalOverride: Boolean(result.tacticalOverride),
       candidates: result.candidates,
       playableCandidates: result.playableCandidates,
       selectedCards: result.cards.map((card) => card.code),
