@@ -853,6 +853,11 @@ public final class HappyDdzClientService implements AutoCloseable {
     }
 
     private void onRemoteEvent(ClientSession session, GameTransportPort source, ProtocolResponse event) {
+        // Transport failures from an old socket must not affect a newer session.
+        if (event.messageId() == 0 && !runtime.isCurrent(session.id(), source)) return;
+        session.publish("REMOTE", "收到服务器消息 " + event.messageId(), Map.of(
+                "messageId", event.messageId(), "messageType", event.messageType(), "json", event.json(),
+                "payload", Base64.getEncoder().encodeToString(event.payload())));
         if (event.messageId() == 0) {
             if (event.json().contains("gameTransportError")) {
                 if (runtime.isCurrent(session.id(), source))
@@ -862,11 +867,6 @@ public final class HappyDdzClientService implements AutoCloseable {
             }
             return;
         }
-        // Ignore events from an old transport after a successful same-session relogin.
-        if (!runtime.isCurrent(session.id(), source) && runtime.connected(session.id())) return;
-        session.publish("REMOTE", "收到服务器消息 " + event.messageId(), Map.of(
-                "messageId", event.messageId(), "messageType", event.messageType(), "json", event.json(),
-                "payload", Base64.getEncoder().encodeToString(event.payload())));
         if (GameMessage.READY.matches(event.messageId()))
             updateTablePrompt(session, "已准备，等待服务器发牌");
         else if (GameMessage.ROOM_EVENT.matches(event.messageId()))
