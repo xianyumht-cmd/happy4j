@@ -3,6 +3,7 @@ import { authRequest, authToken, currentUser } from '@/services/api.js'
 import { GameSocket } from '@/services/game-socket.js'
 import { useToasts } from './use-toasts.js'
 import { playerMessage } from '@/utils/player-message.js'
+import { chooseActiveSession, hallReady, sessionStatus } from '@/utils/game-session-state.js'
 
 const state = reactive({
   user: null,
@@ -19,8 +20,16 @@ const state = reactive({
 
 const screen = ref('lobby')
 const lobbyTab = ref('modes')
-const qr = reactive({ open: false, loading: false, image: '', status: '请选择登录方式' })
+const qr = reactive({
+  open: false,
+  loading: false,
+  image: '',
+  status: '请选择登录方式',
+  sessionId: null,
+  completed: false,
+})
 let socket = null
+let qrCompletionTimer = null
 const { push } = useToasts()
 
 export function useGameClient() {
@@ -28,17 +37,43 @@ export function useGameClient() {
   const table = computed(() => session.value?.table || null)
   const authenticated = computed(() => state.preview || Boolean(state.user && authToken.get()))
 
-  function updateSession(snapshot) {
+  function syncQrProgress(snapshot) {
+    if (!qr.sessionId || snapshot.id !== qr.sessionId) return
+    if (hallReady(snapshot)) {
+      qr.status = '游戏账号已连接大厅'
+      if (!qr.completed) {
+        qr.completed = true
+        push('游戏账号已连接大厅')
+        const completedSessionId = snapshot.id
+        clearTimeout(qrCompletionTimer)
+        qrCompletionTimer = setTimeout(() => {
+          if (qr.sessionId === completedSessionId && hallReady(state.sessions[completedSessionId]))
+            qr.open = false
+        }, 800)
+      }
+      return
+    }
+    if (qr.completed) return
+    qr.status =
+      snapshot.phase === 'FAILED'
+        ? `游戏登录失败：${playerMessage(snapshot.detail)}`
+        : sessionStatus(snapshot)
+  }
+
+  function updateSession(snapshot, preferred = false) {
     if (!snapshot?.id) return
     state.sessions[snapshot.id] = snapshot
-    state.activeSessionId ||= snapshot.id
+    const qrTarget = qr.sessionId === snapshot.id ? snapshot.id : null
+    state.activeSessionId = chooseActiveSession(
+      state.sessions,
+      state.activeSessionId,
+      preferred || qrTarget ? snapshot.id : null,
+    )
+    syncQrProgress(snapshot)
     const active = state.sessions[state.activeSessionId]
     if (active?.table?.sceneId > 0 && active.table.stage !== 'IDLE') screen.value = 'room'
     if (!active?.table?.sceneId || active.table.stage === 'IDLE') screen.value = 'lobby'
-    if (active?.phase === 'EVICTED') {
-      state.evicted = true
-      screen.value = 'lobby'
-    }
+    state.evicted = active?.phase === 'EVICTED'
   }
 
   async function initialize() {
@@ -85,13 +120,17 @@ export function useGameClient() {
       state.modes = data.modes || []
       state.aiConfig = data.aiConfig || null
       state.sessions = Object.fromEntries((data.sessions || []).map((item) => [item.id, item]))
-      state.activeSessionId = data.sessions?.[0]?.id || null
+      state.activeSessionId = chooseActiveSession(
+        state.sessions,
+        state.activeSessionId,
+        qr.sessionId,
+      )
       if (!state.activeSessionId) {
         try {
-          updateSession(await socket.command('SESSION_RESUME'))
+          updateSession(await socket.command('SESSION_RESUME'), true)
         } catch {
           try {
-            updateSession(await socket.command('SESSION_CREATE'))
+            updateSession(await socket.command('SESSION_CREATE'), true)
           } catch (error) {
             push(playerMessage(error.message), 'error')
           }
@@ -101,11 +140,11 @@ export function useGameClient() {
     }
     if (envelope.type === 'SNAPSHOT') updateSession(envelope.payload)
     if (envelope.type === 'QR_STATUS') {
-      qr.status = playerMessage(envelope.payload.message)
-      if (envelope.payload.status === 'CONFIRMED') {
-        push('游戏账号登录成功')
-        setTimeout(() => (qr.open = false), 500)
-      }
+      const result = envelope.payload
+      if (result?.sessionId !== qr.sessionId || qr.completed) return
+      if (result.status === 'CONFIRMED')
+        qr.status = '扫码已确认，正在验证游戏账号并连接大厅'
+      else qr.status = playerMessage(result.message)
     }
     if (envelope.type === 'ERROR' && !envelope.requestId)
       push(playerMessage(envelope.payload.message), 'error')
@@ -125,7 +164,8 @@ export function useGameClient() {
     try {
       const payload = userCommands.has(name) ? extra : { sessionId: state.activeSessionId, ...extra }
       const result = await socket.command(name, payload)
-      if (result?.id && result?.phase) updateSession(result)
+      if (result?.id && result?.phase)
+        updateSession(result, name === 'SESSION_CREATE' || name === 'SESSION_RESUME')
       if (name === 'AI_CONFIG_GET' || name === 'AI_CONFIG_SAVE') state.aiConfig = result
       if (successMessage) push(successMessage)
       return result
@@ -137,14 +177,22 @@ export function useGameClient() {
   }
 
   async function startQr(provider) {
+    if (qr.loading) return
+    clearTimeout(qrCompletionTimer)
     qr.loading = true
+    qr.completed = false
+    qr.sessionId = state.activeSessionId
     qr.image = ''
     qr.status = `正在生成${provider === 'wechat' ? '微信' : 'QQ'}二维码`
     state.provider = provider
     try {
       const result = await command('QR_START', { provider })
+      qr.sessionId = result.sessionId
       qr.image = result.image
-      qr.status = `请使用${provider === 'wechat' ? '微信' : 'QQ'}扫码并确认登录`
+      if (qr.status.startsWith('正在生成'))
+        qr.status = `请使用${provider === 'wechat' ? '微信' : 'QQ'}扫码并确认登录`
+    } catch (error) {
+      qr.status = `二维码生成失败：${playerMessage(error.message)}`
     } finally {
       qr.loading = false
     }
@@ -162,6 +210,11 @@ export function useGameClient() {
     state.sessions = {}
     state.activeSessionId = null
     state.aiConfig = null
+    state.connected = false
+    qr.open = false
+    qr.sessionId = null
+    qr.completed = false
+    clearTimeout(qrCompletionTimer)
     screen.value = 'lobby'
   }
 
