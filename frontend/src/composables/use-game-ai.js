@@ -3,7 +3,11 @@ import { chooseFullAutoBid, chooseFullAutoDouble, chooseFullAutoMove } from '@/a
 import { enumerateLegalMoves } from '@/ai/legal-moves.js'
 import { chooseDoubleDecision, chooseLandlordDecision } from '@/ai/policy.js'
 import { settlementIdentity, settlementOutcome } from '@/ai/settlement.js'
-import { immediateWinningMove, urgentLandlordResponse } from '@/ai/tactics.js'
+import {
+  immediateWinningMove,
+  preserveLandlordSingleControl,
+  urgentLandlordResponse,
+} from '@/ai/tactics.js'
 
 const SUPPORT_MISSION_ID = 1563
 const SUPER_DOUBLE_ITEM_ID = 1030108
@@ -16,6 +20,7 @@ const REASON_LABELS = Object.freeze({
   WP_MAX_Q: '欢乐斗地主 WP 模型选择最高评分动作',
   TACTICAL_WIN_NOW: '检测到可以立即出完，执行制胜动作',
   TACTICAL_BLOCK_LANDLORD: '地主残局警戒：有合法压制牌时不盲目过牌',
+  TACTICAL_PRESERVE_SINGLE: '地主残局警戒：散单保留最大控牌',
   ONLY_LEGAL_MOVE: '当前只有一个合法出牌动作',
   MODEL_FALLBACK: '模型暂不可用，执行合法保底动作',
   INCOMPLETE_STATE_HEURISTIC: '公开牌历史不完整，使用保牌型残局策略',
@@ -31,6 +36,11 @@ const WALLET_READY_PHASES = new Set(['HALL_CONNECTED', 'ENTERING_ROOM', 'AT_TABL
 
 export function canRefreshWallet(session) {
   return WALLET_READY_PHASES.has(session?.phase)
+}
+
+export function isInsufficientBeansError(error) {
+  const message = String(error?.message || error || '')
+  return /10810|欢乐豆太少|欢乐豆不足/.test(message)
 }
 
 function delay(milliseconds) {
@@ -245,6 +255,11 @@ export function useGameAi(client) {
       runtime.lastError = error.message
       runtime.status = uncertain ? '操作状态未知，等待服务器更新牌桌' : '操作没有完成，正在重新同步'
       log('ERROR', command, runtime.status, { message: error.message, retrySuppressed: uncertain })
+      if (['CHANGE_TABLE', 'MODE_ENTER', 'READY'].includes(command) && isInsufficientBeansError(error)) {
+        log('INFO', 'LIMIT', '服务器确认欢乐豆不足，停止自动操作，避免重复请求')
+        await stop('欢乐豆不足，AI 已停止，请补充欢乐豆后手动重新开始')
+        return false
+      }
       schedule(1800)
       return false
     }
@@ -341,7 +356,8 @@ export function useGameAi(client) {
       }
       return
     }
-    const urgent = urgentLandlordResponse(table, enumerateLegalMoves(table), result.cards)
+    const legalMoves = enumerateLegalMoves(table)
+    const urgent = urgentLandlordResponse(table, legalMoves, result.cards)
     if (urgent) {
       log('INFO', 'TACTICS', '地主即将走完，已将不出改为合法压制动作', {
         landlordCardsLeft: table.players?.find(
@@ -351,6 +367,20 @@ export function useGameAi(client) {
         cards: urgent.map((card) => card.code),
       })
       result = { ...result, cards: urgent, reason: 'TACTICAL_BLOCK_LANDLORD', tacticalOverride: true }
+    }
+    const conservativeLead = preserveLandlordSingleControl(table, legalMoves, result.cards)
+    if (conservativeLead) {
+      log('INFO', 'TACTICS', '地主散单残局已保留最大牌，先出较小单张', {
+        providerReason: result.providerReason,
+        oldCards: result.cards.map((card) => card.code),
+        cards: conservativeLead.map((card) => card.code),
+      })
+      result = {
+        ...result,
+        cards: conservativeLead,
+        reason: 'TACTICAL_PRESERVE_SINGLE',
+        tacticalOverride: true,
+      }
     }
     const elapsed = Math.round(performance.now() - startedAt)
     const pass = result.cards.length === 0
@@ -365,10 +395,12 @@ export function useGameAi(client) {
       modelFile: result.modelFile,
       reason: result.reason,
       decisionSource:
-        result.reason === 'OPENAI_DECISION'
-          ? 'LUNA'
-          : result.reason === 'ONLY_LEGAL_MOVE' || result.reason === 'TACTICAL_WIN_NOW'
-            ? 'RULES'
+        result.tacticalOverride ||
+        result.reason === 'ONLY_LEGAL_MOVE' ||
+        result.reason === 'TACTICAL_WIN_NOW'
+          ? 'RULES'
+          : result.reason === 'OPENAI_DECISION'
+            ? 'LUNA'
             : 'DOUZERO',
       providerFailure,
       tacticalOverride: Boolean(result.tacticalOverride),
