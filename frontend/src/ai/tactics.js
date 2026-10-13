@@ -1,3 +1,5 @@
+import { classifyMove, nativeRank, TYPE } from './legal-moves.js'
+
 // A legal move that empties the local hand wins the round regardless of role.
 // It should not be displaced by a speculative model preference to pass.
 export function immediateWinningMove(table, candidates) {
@@ -18,8 +20,6 @@ export function immediateWinningMove(table, candidates) {
     ) || null
   )
 }
-
-import { classifyMove, nativeRank, TYPE } from './legal-moves.js'
 
 // When the landlord is close to going out, passing on their live play despite
 // having a legal response can end the game before the teammate gets another turn.
