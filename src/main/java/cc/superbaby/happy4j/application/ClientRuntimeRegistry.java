@@ -51,7 +51,19 @@ public class ClientRuntimeRegistry implements AutoCloseable {
         if (previous != null && previous != connection) previous.close();
     }
 
+    /**
+     * A failed Lotus socket must not continue occupying a user's session slot.
+     * Reap only disconnected transports. Healthy connections are never replaced
+     * simply because another login attempt was made.
+     */
+    private void discardDisconnectedConnections() {
+        connections.forEach((id, connection) -> {
+            if (!connection.connected() && connections.remove(id, connection)) connection.close();
+        });
+    }
+
     public synchronized void assertCapacity(UUID ownerId, int maxActiveUsers, int maxSessionsPerUser) {
+        discardDisconnectedConnections();
         long owned = connections.keySet().stream()
                 .map(sessions::get)
                 .filter(java.util.Objects::nonNull)
