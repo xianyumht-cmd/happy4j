@@ -6,6 +6,11 @@ import { chooseDoubleDecision, chooseLandlordDecision } from '@/ai/policy.js'
 const SUPPORT_MISSION_ID = 1563
 const SUPER_DOUBLE_ITEM_ID = 1030108
 const AI_LOG_STORAGE_KEY = 'happy4j.ai.runtime.logs.v1'
+const HALL_READY_PHASES = new Set(['HALL_CONNECTED', 'ENTERING_ROOM', 'AT_TABLE', 'READY', 'PLAYING'])
+
+export function hallSessionReady(session) {
+  return HALL_READY_PHASES.has(session?.phase)
+}
 const REASON_LABELS = Object.freeze({
   RULE_FORCED_PASS: '没有合法压制动作，按规则不出',
   WP_STRATEGIC_PASS: '欢乐斗地主 WP 模型主动选择不出',
@@ -386,6 +391,11 @@ export function useGameAi(client) {
     }
     if (!session?.uin) {
       runtime.status = '请先扫码登录游戏账号'
+      schedule(1500)
+      return
+    }
+    if (!client.state.preview && !hallSessionReady(session)) {
+      runtime.status = '大厅尚未连接，等待重新登录或恢复连接'
       schedule(1500)
       return
     }
