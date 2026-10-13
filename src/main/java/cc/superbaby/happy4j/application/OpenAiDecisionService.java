@@ -98,7 +98,7 @@ public class OpenAiDecisionService {
                 decision = parseDecision(reply.content());
             } catch (IllegalStateException error) {
                 throw new IllegalStateException(error.getMessage()
-                        + " (finish_reason=" + reply.finishReason() + ")", error);
+                        + " (finish_reason=" + reply.finishReason() + ")");
             }
             int choice = decision.path("choice").asInt(-1);
             if (choice < 0 || choice >= options.size())
